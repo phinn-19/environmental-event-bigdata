@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "region_id",
+    "start_utc",
+    "end_utc",
+    "retrieved_at_utc",
+    "format",
+    "file",
+    "status",
+    "row_count",
+    "sha256"
+  ],
+  "properties": {
+    "source": {
+      "enum": [
+        "era5",
+        "openaq",
+        "nasa_firms"
+      ]
+    },
+    "region_id": {
+      "type": "string"
+    },
+    "start_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "end_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "retrieved_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "format": {
+      "enum": [
+        "grib",
+        "json",
+        "csv"
+      ]
+    },
+    "file": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "success",
+        "empty",
+        "partial",
+        "failed"
+      ]
+    },
+    "row_count": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

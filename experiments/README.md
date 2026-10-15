@@ -1,0 +1,1 @@
+Keep your existing `scripts/test_openaq.py`, `scripts/test_firms.py`, `scripts/test_era5.py`, `scripts/inspect_era5.py` where they are for now. Do not move or delete them automatically. Move into `experiments/` later via reviewed PR once paths are made relative and no credentials are hard-coded.

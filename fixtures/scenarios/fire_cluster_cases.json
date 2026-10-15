@@ -1,0 +1,49 @@
+{
+  "synthetic": true,
+  "observations": [
+    {
+      "hotspot_id": "synthetic-fire-a",
+      "timestamp_utc": "2024-11-01T06:00:00Z",
+      "latitude": 12.50001,
+      "longitude": 108.50001,
+      "confidence_raw": "n"
+    },
+    {
+      "hotspot_id": "synthetic-fire-b",
+      "timestamp_utc": "2024-11-01T06:20:00Z",
+      "latitude": 12.501,
+      "longitude": 108.501,
+      "confidence_raw": "h"
+    },
+    {
+      "hotspot_id": "synthetic-fire-c",
+      "timestamp_utc": "2024-11-01T06:25:00Z",
+      "latitude": 13.5,
+      "longitude": 108.5,
+      "confidence_raw": "n"
+    },
+    {
+      "hotspot_id": "synthetic-fire-low",
+      "timestamp_utc": "2024-11-01T06:10:00Z",
+      "latitude": 12.5005,
+      "longitude": 108.5005,
+      "confidence_raw": "l"
+    },
+    {
+      "hotspot_id": "synthetic-fire-late",
+      "timestamp_utc": "2024-11-03T07:00:00Z",
+      "latitude": 12.5005,
+      "longitude": 108.5005,
+      "confidence_raw": "n"
+    }
+  ],
+  "expected_cluster_member_ids": [
+    "synthetic-fire-a",
+    "synthetic-fire-b"
+  ],
+  "expected_outside_or_excluded_ids": [
+    "synthetic-fire-c",
+    "synthetic-fire-low",
+    "synthetic-fire-late"
+  ]
+}

@@ -1,0 +1,1 @@
+Member 3 owns dashboard. Initial dashboard may read `fixtures/events/events_mock.json` (synthetic) or `data/demo/events_mock.json`, and must later switch to `data/events/events.json` (real, same contract). No API keys needed by dashboard.

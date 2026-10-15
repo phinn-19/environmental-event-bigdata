@@ -1,0 +1,75 @@
+# FOUNDATION v1 — public, non-secret; adjust through reviewed PR only.
+project:
+  name: environmental-event-bigdata
+  environment: local
+  data_root: data
+  timezone: UTC
+  crs: EPSG:4326
+  fixture_mode: true
+regions:
+  VN_BBOX:
+    north: 24.0
+    west: 102.0
+    south: 8.0
+    east: 110.0
+  HANOI:
+    north: 21.25
+    west: 105.5
+    south: 20.75
+    east: 106.0
+ingestion:
+  era5:
+    dataset: reanalysis-era5-single-levels
+    data_format: grib
+    variables:
+      - 2m_temperature
+      - 2m_dewpoint_temperature
+      - 10m_u_component_of_wind
+      - 10m_v_component_of_wind
+      - total_precipitation
+  firms:
+    historical_product_preference: VIIRS_NOAA20_SP
+    recent_product: VIIRS_NOAA20_NRT
+    max_days_per_request: 5
+  openaq:
+    api_version: v3
+    parameters: [pm25]
+    pilot_sensor_ids: [21632]  # pilot only, not production coverage guarantee
+    page_limit: 100
+storage:
+  raw: data/raw
+  silver: data/silver
+  curated: data/curated
+  events: data/events
+  demo: data/demo
+processing:
+  engine: spark
+  spark_master: "local[2]"
+  spark_driver_memory: 4g
+  timezone: UTC
+integration:
+  start_utc: null  # must verify common data window first
+  end_utc: null
+  region_id: VN_BBOX
+
+# Contract Decisions v1.1: DEFAULTS FOR DEVELOPMENT/TESTS, not validated science.
+# Changes to method/thresholds require group review and updated fixtures/tests.
+algorithms:
+  air_quality:
+    baseline:
+      method: same_utc_hour_median_30d_v1
+      lookback_days: 30
+      min_valid_samples: 10
+      exclude_flagged: true
+    anomaly:
+      min_absolute_increase_ugm3: 25.0
+      min_ratio: 1.5
+      min_consecutive_hours: 2
+  fire:
+    algorithm: st_dbscan_v1
+    spatial_radius_km: 5.0
+    temporal_radius_hours: 24
+    min_samples: 2
+    accepted_confidence: [n, h]
+    historical_preference: VIIRS_NOAA20_SP
+    severity: undetermined

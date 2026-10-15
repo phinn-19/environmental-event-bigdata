@@ -1,0 +1,40 @@
+[
+  {
+    "sensor_id": "21632",
+    "location_id": "7441",
+    "timestamp_utc": "2024-11-01T10:00:00Z",
+    "period_end_utc": "2024-11-01T11:00:00Z",
+    "latitude": 21.021939,
+    "longitude": 105.818806,
+    "parameter": "pm25",
+    "value_ugm3": null,
+    "has_flags": true,
+    "source": "openaq",
+    "weather_grid_id": null,
+    "weather_timestamp_utc": null,
+    "weather_distance_km": null,
+    "temperature_c": null,
+    "wind_u_ms": null,
+    "wind_v_ms": null,
+    "precipitation_mm_1h": null
+  },
+  {
+    "sensor_id": "21632",
+    "location_id": "7441",
+    "timestamp_utc": "2024-11-01T11:00:00Z",
+    "period_end_utc": "2024-11-01T12:00:00Z",
+    "latitude": 21.021939,
+    "longitude": 105.818806,
+    "parameter": "pm25",
+    "value_ugm3": 60.0,
+    "has_flags": false,
+    "source": "openaq",
+    "weather_grid_id": "era5_0.25_21.00_105.75",
+    "weather_timestamp_utc": "2024-11-01T11:00:00Z",
+    "weather_distance_km": 7.5,
+    "temperature_c": 28.0,
+    "wind_u_ms": 1.0,
+    "wind_v_ms": -0.1,
+    "precipitation_mm_1h": null
+  }
+]

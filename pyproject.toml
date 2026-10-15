@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "environmental-event-bigdata"
+version = "0.1.0"
+description = "Three-person Environmental Big Data project foundation (not a finished pipeline)"
+requires-python = ">=3.12,<3.13"
+dependencies = ["PyYAML>=6.0,<7.0"]
+
+[tool.setuptools]
+packages = ["src", "src.common", "src.ingestion", "src.processing", "src.events", "src.dashboard"]

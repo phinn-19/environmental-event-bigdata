@@ -1,0 +1,48 @@
+{
+  "synthetic": true,
+  "sensor_id": "synthetic-sensor-1",
+  "parameter": "pm25",
+  "records": [
+    {
+      "timestamp_utc": "2024-11-01T10:00:00Z",
+      "value_ugm3": 85.0,
+      "baseline_ugm3": 30.0,
+      "is_usable": true,
+      "has_flags": false
+    },
+    {
+      "timestamp_utc": "2024-11-01T11:00:00Z",
+      "value_ugm3": 86.0,
+      "baseline_ugm3": 30.0,
+      "is_usable": true,
+      "has_flags": false
+    },
+    {
+      "timestamp_utc": "2024-11-01T12:00:00Z",
+      "value_ugm3": null,
+      "baseline_ugm3": 30.0,
+      "is_usable": true,
+      "has_flags": true
+    },
+    {
+      "timestamp_utc": "2024-11-01T13:00:00Z",
+      "value_ugm3": 100.0,
+      "baseline_ugm3": 30.0,
+      "is_usable": true,
+      "has_flags": false
+    },
+    {
+      "timestamp_utc": "2024-11-01T14:00:00Z",
+      "value_ugm3": 35.0,
+      "baseline_ugm3": 30.0,
+      "is_usable": true,
+      "has_flags": false
+    }
+  ],
+  "expected_event_windows_utc": [
+    [
+      "2024-11-01T10:00:00Z",
+      "2024-11-01T12:00:00Z"
+    ]
+  ]
+}

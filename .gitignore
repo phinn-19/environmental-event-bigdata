@@ -1,0 +1,32 @@
+# Secrets, credentials
+.env
+.env.*
+!.env.example
+.cdsapirc
+*.pem
+*.key
+# Python and IDE
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+*.egg-info/
+build/
+dist/
+# User local data / logs / exports
+/data/**
+!/data/.gitkeep
+/logs/
+*.log
+# Installer and backups are local only
+/foundation-kit-v1/
+/foundation-kit-v1_1/
+/.foundation_backups/
+# OS
+.DS_Store
+Thumbs.db

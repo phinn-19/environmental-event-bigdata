@@ -1,0 +1,26 @@
+[
+  {
+    "sensor_id": "21632",
+    "location_id": "7441",
+    "timestamp_utc": "2024-11-01T10:00:00Z",
+    "period_end_utc": "2024-11-01T11:00:00Z",
+    "latitude": 21.021939,
+    "longitude": 105.818806,
+    "parameter": "pm25",
+    "value_ugm3": null,
+    "has_flags": true,
+    "source": "openaq"
+  },
+  {
+    "sensor_id": "21632",
+    "location_id": "7441",
+    "timestamp_utc": "2024-11-01T11:00:00Z",
+    "period_end_utc": "2024-11-01T12:00:00Z",
+    "latitude": 21.021939,
+    "longitude": 105.818806,
+    "parameter": "pm25",
+    "value_ugm3": 60.0,
+    "has_flags": false,
+    "source": "openaq"
+  }
+]

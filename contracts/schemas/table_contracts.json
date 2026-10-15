@@ -1,0 +1,128 @@
+{
+  "schema_version": "v1",
+  "note": "JSON fixture records (ISO-8601 Z); Parquet production uses timestamp UTC, not string",
+  "tables": {
+    "air_quality_hourly": {
+      "key": [
+        "sensor_id",
+        "parameter",
+        "timestamp_utc"
+      ],
+      "fields": {
+        "sensor_id": "string",
+        "location_id": "string",
+        "timestamp_utc": "utc",
+        "period_end_utc": "utc",
+        "latitude": "double",
+        "longitude": "double",
+        "parameter": "string",
+        "value_ugm3": "double?",
+        "has_flags": "boolean?",
+        "source": "string"
+      }
+    },
+    "weather_hourly": {
+      "key": [
+        "grid_id",
+        "timestamp_utc"
+      ],
+      "fields": {
+        "grid_id": "string",
+        "timestamp_utc": "utc",
+        "latitude": "double",
+        "longitude": "double",
+        "temperature_c": "double?",
+        "dewpoint_c": "double?",
+        "wind_u_ms": "double?",
+        "wind_v_ms": "double?",
+        "precipitation_mm_1h": "double?",
+        "source": "string"
+      }
+    },
+    "fire_hotspots": {
+      "key": [
+        "hotspot_id"
+      ],
+      "fields": {
+        "hotspot_id": "string",
+        "timestamp_utc": "utc",
+        "latitude": "double",
+        "longitude": "double",
+        "frp_mw": "double?",
+        "confidence_raw": "string?",
+        "satellite": "string",
+        "instrument": "string?",
+        "daynight": "string?",
+        "source_product": "string",
+        "source": "string"
+      }
+    },
+    "air_quality_context_hourly": {
+      "key": [
+        "sensor_id",
+        "parameter",
+        "timestamp_utc"
+      ],
+      "fields": {
+        "sensor_id": "string",
+        "location_id": "string",
+        "timestamp_utc": "utc",
+        "period_end_utc": "utc",
+        "latitude": "double",
+        "longitude": "double",
+        "parameter": "string",
+        "value_ugm3": "double?",
+        "has_flags": "boolean?",
+        "source": "string",
+        "weather_grid_id": "string?",
+        "weather_timestamp_utc": "utc?",
+        "weather_distance_km": "double?",
+        "temperature_c": "double?",
+        "wind_u_ms": "double?",
+        "wind_v_ms": "double?",
+        "precipitation_mm_1h": "double?"
+      }
+    },
+    "fire_hotspots_context": {
+      "key": [
+        "hotspot_id"
+      ],
+      "fields": {
+        "hotspot_id": "string",
+        "timestamp_utc": "utc",
+        "latitude": "double",
+        "longitude": "double",
+        "frp_mw": "double?",
+        "confidence_raw": "string?",
+        "satellite": "string",
+        "instrument": "string?",
+        "daynight": "string?",
+        "source_product": "string",
+        "source": "string",
+        "weather_grid_id": "string?",
+        "weather_timestamp_utc": "utc?",
+        "weather_distance_km": "double?",
+        "temperature_c": "double?",
+        "wind_u_ms": "double?",
+        "wind_v_ms": "double?",
+        "precipitation_mm_1h": "double?"
+      }
+    },
+    "air_quality_baseline": {
+      "key": [
+        "sensor_id",
+        "parameter",
+        "timestamp_utc"
+      ],
+      "fields": {
+        "sensor_id": "string",
+        "parameter": "string",
+        "timestamp_utc": "utc",
+        "baseline_ugm3": "double?",
+        "sample_count": "int",
+        "method": "string",
+        "is_usable": "boolean"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "grid_id": "era5_0.25_21.00_105.75",
+    "timestamp_utc": "2024-11-01T10:00:00Z",
+    "latitude": 21.0,
+    "longitude": 105.75,
+    "temperature_c": 27.0,
+    "dewpoint_c": 22.0,
+    "wind_u_ms": 1.2,
+    "wind_v_ms": -0.5,
+    "precipitation_mm_1h": 0.1,
+    "source": "era5"
+  },
+  {
+    "grid_id": "era5_0.25_21.00_105.75",
+    "timestamp_utc": "2024-11-01T11:00:00Z",
+    "latitude": 21.0,
+    "longitude": 105.75,
+    "temperature_c": 28.0,
+    "dewpoint_c": 23.0,
+    "wind_u_ms": 1.0,
+    "wind_v_ms": -0.1,
+    "precipitation_mm_1h": 0.2,
+    "source": "era5"
+  }
+]

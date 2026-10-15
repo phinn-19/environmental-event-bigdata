@@ -1,0 +1,28 @@
+[
+  {
+    "hotspot_id": "synthetic-hotspot-001",
+    "timestamp_utc": "2024-11-01T06:16:00Z",
+    "latitude": 12.50001,
+    "longitude": 108.50001,
+    "frp_mw": 4.8,
+    "confidence_raw": "n",
+    "satellite": "N20",
+    "instrument": "VIIRS",
+    "daynight": "D",
+    "source_product": "VIIRS_NOAA20_SP",
+    "source": "nasa_firms"
+  },
+  {
+    "hotspot_id": "synthetic-hotspot-002",
+    "timestamp_utc": "2024-11-01T06:17:00Z",
+    "latitude": 12.50071,
+    "longitude": 108.50071,
+    "frp_mw": 8.2,
+    "confidence_raw": "n",
+    "satellite": "N20",
+    "instrument": "VIIRS",
+    "daynight": "D",
+    "source_product": "VIIRS_NOAA20_SP",
+    "source": "nasa_firms"
+  }
+]

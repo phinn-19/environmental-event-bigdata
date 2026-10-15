@@ -1,0 +1,11 @@
+[
+  {
+    "sensor_id": "21632",
+    "parameter": "pm25",
+    "timestamp_utc": "2024-11-01T11:00:00Z",
+    "baseline_ugm3": 32.0,
+    "sample_count": 18,
+    "method": "same_utc_hour_median_30d_v1",
+    "is_usable": true
+  }
+]

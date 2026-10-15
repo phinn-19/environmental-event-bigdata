@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Environmental events array v1",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "event_id",
+      "event_type",
+      "region_id",
+      "start_time_utc",
+      "end_time_utc",
+      "centroid_latitude",
+      "centroid_longitude",
+      "severity",
+      "metrics",
+      "weather_context",
+      "evidence_ids",
+      "algorithm_version"
+    ],
+    "properties": {
+      "event_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "event_type": {
+        "enum": [
+          "AIR_QUALITY_ANOMALY",
+          "FIRE_HOTSPOT_CLUSTER"
+        ]
+      },
+      "region_id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "start_time_utc": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "end_time_utc": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "centroid_latitude": {
+        "type": "number",
+        "minimum": -90,
+        "maximum": 90
+      },
+      "centroid_longitude": {
+        "type": "number",
+        "minimum": -180,
+        "maximum": 180
+      },
+      "severity": {
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "undetermined"
+        ]
+      },
+      "metrics": {
+        "type": "object"
+      },
+      "weather_context": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "required": [
+              "temperature_c",
+              "wind_u_ms",
+              "wind_v_ms",
+              "precipitation_mm_1h",
+              "context_method"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "temperature_c": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "wind_u_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "wind_v_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "precipitation_mm_1h": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "context_method": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      },
+      "evidence_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "algorithm_version": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "event_type": {
+              "const": "AIR_QUALITY_ANOMALY"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "metrics": {
+              "type": "object",
+              "required": [
+                "sensor_ids",
+                "parameter",
+                "peak_ugm3",
+                "mean_ugm3",
+                "baseline_ugm3",
+                "duration_hours"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "sensor_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "parameter": {
+                  "const": "pm25"
+                },
+                "peak_ugm3": {
+                  "type": "number"
+                },
+                "mean_ugm3": {
+                  "type": "number"
+                },
+                "baseline_ugm3": {
+                  "type": "number"
+                },
+                "duration_hours": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "event_type": {
+              "const": "FIRE_HOTSPOT_CLUSTER"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "metrics": {
+              "type": "object",
+              "required": [
+                "hotspot_count",
+                "max_frp_mw",
+                "sum_frp_mw",
+                "satellites"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "hotspot_count": {
+                  "type": "integer",
+                  "minimum": 2
+                },
+                "max_frp_mw": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "sum_frp_mw": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "satellites": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

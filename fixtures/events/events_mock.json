@@ -1,0 +1,48 @@
+[
+  {
+    "event_id": "synthetic-aq-001",
+    "event_type": "AIR_QUALITY_ANOMALY",
+    "region_id": "HANOI",
+    "start_time_utc": "2024-11-01T10:00:00Z",
+    "end_time_utc": "2024-11-01T14:00:00Z",
+    "centroid_latitude": 21.021939,
+    "centroid_longitude": 105.818806,
+    "severity": "undetermined",
+    "metrics": {
+      "sensor_ids": ["21632"],
+      "parameter": "pm25",
+      "peak_ugm3": 90.0,
+      "mean_ugm3": 75.0,
+      "baseline_ugm3": 30.0,
+      "duration_hours": 4
+    },
+    "weather_context": null,
+    "evidence_ids": ["aq:21632:pm25:2024-11-01T10:00:00Z"],
+    "algorithm_version": "aq-v1"
+  },
+  {
+    "event_id": "synthetic-fire-001",
+    "event_type": "FIRE_HOTSPOT_CLUSTER",
+    "region_id": "VN_BBOX",
+    "start_time_utc": "2024-11-01T06:00:00Z",
+    "end_time_utc": "2024-11-01T07:00:00Z",
+    "centroid_latitude": 12.5,
+    "centroid_longitude": 108.5,
+    "severity": "undetermined",
+    "metrics": {
+      "hotspot_count": 2,
+      "max_frp_mw": 8.2,
+      "sum_frp_mw": 13.0,
+      "satellites": ["N20"]
+    },
+    "weather_context": {
+      "temperature_c": 27.0,
+      "wind_u_ms": 1.2,
+      "wind_v_ms": -0.5,
+      "precipitation_mm_1h": null,
+      "context_method": "nearest_grid_hourly_v1"
+    },
+    "evidence_ids": ["synthetic-hotspot-001", "synthetic-hotspot-002"],
+    "algorithm_version": "fire-v1"
+  }
+]

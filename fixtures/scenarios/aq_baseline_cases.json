@@ -1,0 +1,157 @@
+{
+  "synthetic": true,
+  "method": "same_utc_hour_median_30d_v1",
+  "cases": [
+    {
+      "name": "baseline_usable_with_exclusions",
+      "sensor_id": "synthetic-sensor-1",
+      "parameter": "pm25",
+      "timestamp_utc": "2024-11-01T10:00:00Z",
+      "history": [
+        {
+          "timestamp_utc": "2024-10-31T10:00:00Z",
+          "value_ugm3": 20,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-30T10:00:00Z",
+          "value_ugm3": 21,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-29T10:00:00Z",
+          "value_ugm3": 22,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-28T10:00:00Z",
+          "value_ugm3": 23,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-27T10:00:00Z",
+          "value_ugm3": 24,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-26T10:00:00Z",
+          "value_ugm3": 25,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-25T10:00:00Z",
+          "value_ugm3": 26,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-24T10:00:00Z",
+          "value_ugm3": 27,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-23T10:00:00Z",
+          "value_ugm3": 28,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-22T10:00:00Z",
+          "value_ugm3": 29,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-21T10:00:00Z",
+          "value_ugm3": 30,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-20T10:00:00Z",
+          "value_ugm3": 31,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-18T10:00:00Z",
+          "value_ugm3": 999,
+          "has_flags": true
+        },
+        {
+          "timestamp_utc": "2024-10-17T10:00:00Z",
+          "value_ugm3": null,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-16T11:00:00Z",
+          "value_ugm3": 250,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-01T10:00:00Z",
+          "value_ugm3": 250,
+          "has_flags": false
+        }
+      ],
+      "expected": {
+        "sample_count": 12,
+        "is_usable": true,
+        "baseline_ugm3": 25.5
+      }
+    },
+    {
+      "name": "baseline_insufficient_history",
+      "sensor_id": "synthetic-sensor-2",
+      "parameter": "pm25",
+      "timestamp_utc": "2024-11-01T10:00:00Z",
+      "history": [
+        {
+          "timestamp_utc": "2024-10-31T10:00:00Z",
+          "value_ugm3": 21,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-30T10:00:00Z",
+          "value_ugm3": 22,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-29T10:00:00Z",
+          "value_ugm3": 23,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-28T10:00:00Z",
+          "value_ugm3": 24,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-27T10:00:00Z",
+          "value_ugm3": 25,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-26T10:00:00Z",
+          "value_ugm3": 26,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-25T10:00:00Z",
+          "value_ugm3": 27,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-24T10:00:00Z",
+          "value_ugm3": 28,
+          "has_flags": false
+        },
+        {
+          "timestamp_utc": "2024-10-23T10:00:00Z",
+          "value_ugm3": 29,
+          "has_flags": false
+        }
+      ],
+      "expected": {
+        "sample_count": 9,
+        "is_usable": false,
+        "baseline_ugm3": null
+      }
+    }
+  ]
+}
