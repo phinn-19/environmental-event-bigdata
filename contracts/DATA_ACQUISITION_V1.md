@@ -120,7 +120,7 @@ REQUEST = {
 - Khi `HTTP 408`: giảm window/chia chunk, ghi thất bại, không retry vô hạn. Với `429`: backoff có giới hạn. Với response `meta.found` dạng `">24"`, không ép thành số nguyên exact count. Dừng phân trang theo dữ liệu và số page, không theo giả định `found` luôn là integer.
 - `value=null` phải bảo toàn; `hasFlags=true` chỉ là **dấu cần xem xét**, chưa kết luận invalid. Không nhầm `coverage.percentComplete=100` với “giá trị đo hợp lệ 100%”.
 
-**Raw metadata:** `data/raw/openaq/locations/<request_id>.json`.  
+**Raw metadata:** `data/raw/openaq/locations/<request_id>.json` + manifest dưới `data/raw/openaq/manifests/locations/`. Live dùng `GET /v3/locations/{location_id}`; replay có thể đọc response `/v3/locations` nhiều trạm nhưng phải xác nhận location/sensor mục tiêu.
 **Raw hourly:** `data/raw/openaq/hours/sensor=<id>/year=YYYY/month=MM/day=DD/page=<N>.json` + manifest/chunk-status.  
 **Không push raw tùy tiện:** kiểm tra quyền sử dụng/attribution của provider trước khi đưa sample OpenAQ lên GitHub.
 
@@ -131,16 +131,17 @@ Ingestion **không chuẩn hóa silver**, chỉ đảm bảo có raw file chính
 | Field | Kiểu | Quy tắc |
 |---|---|---|
 | `schema_version` | string | `manifest-v1` |
+| `acquisition_mode` | enum | `live` (HTTP API) hoặc `replay` (đọc lại snapshot); không nhầm replay với download mới |
 | `source` | enum | `era5`, `nasa_firms`, `openaq` |
 | `source_product` | string | `reanalysis-era5-single-levels`, `VIIRS_NOAA20_SP`, `openaq_v3_hours`... |
 | `region_id` | string | mã vùng từ config; OpenAQ sensor riêng vẫn giữ region mà nó được phân bổ |
-| `start_utc`, `end_utc` | ISO string | end exclusive, window **nội bộ**, không tự suy từ URL |
+| `start_utc`, `end_utc` | ISO string / null | Hourly MUST là `[start_utc,end_utc)`; riêng metadata location không có window thì cả hai phải `null` (không được giả ngày quan trắc). |
 | `retrieved_at_utc` | ISO string | lúc nhận xong dữ liệu |
 | `format` | enum | `grib`, `csv`, `json` |
 | `file` | string/null | đường dẫn **relative repo**, null khi thất bại không có payload |
 | `status` | enum | `success`, `empty`, `partial`, `failed` |
 | `bytes` | integer/null | kích thước tệp nếu có |
-| `record_count` | integer/null | null nếu chưa parse; 0 nếu parse xác nhận rỗng |
+| `row_count` | integer/null | **Tên chuẩn theo manifest.schema.json**; null nếu chưa parse; 0 nếu xác nhận rỗng. Với location metadata, đây là số object trong `results` của payload Raw (không phải số sensor). |
 | `sha256` | string/null | checksum nếu có file |
 | `request_id` | string | run/request định danh ổn định cho log |
 | `error_type` | string/null | chỉ ghi mã lỗi/lý do đã sanitize, không chứa token |

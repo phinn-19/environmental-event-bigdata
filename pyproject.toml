@@ -9,5 +9,11 @@ description = "Three-person Environmental Big Data project foundation (not a fin
 requires-python = ">=3.12,<3.13"
 dependencies = ["PyYAML>=6.0,<7.0"]
 
+[project.optional-dependencies]
+ingestion = [
+    "cdsapi==0.7.7",
+    "eccodes==2.49.0",
+]
+
 [tool.setuptools]
 packages = ["src", "src.common", "src.ingestion", "src.processing", "src.events", "src.dashboard"]
