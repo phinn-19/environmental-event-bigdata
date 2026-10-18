@@ -56,7 +56,10 @@ These results are sensitive to the actual manifests present on the local machine
 - No execution, retry/resume, scheduling, daily ingestion or bytes budget yet.
 - The OpenAQ completeness proof uses the **current** configured page_limit and
   terminal-page evidence. If older raw data was fetched with a different page
-  limit, it is conservatively marked `REVIEW`.
+  limit, it is conservatively marked `REVIEW`. When `meta.found` is an exact
+  integer, it must agree with the sum of stored rows; a mismatch is `REVIEW`
+  even if the last page is short. Non-numeric `meta.found` is not interpreted
+  as an exact count, so `COMPLETE` still does not prove full provider coverage.
 - Exact FIRMS request identity includes product, bbox, start, chunk length,
   and acquisition mode. A partially overlapping file is marked `REVIEW`, not
   counted as covering the entire planned chunk.

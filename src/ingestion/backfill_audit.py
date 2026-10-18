@@ -151,16 +151,24 @@ def audit_item(*, root: Path, item: PlanItem, config: dict,
         if any(n < limit for _, n, _ in pages[:-1]):
             return AuditResult(item, 'review', 'unexpected_early_terminal_page')
         last_num, last_rows, last_path = pages[-1]
-        if last_rows < limit:
-            return AuditResult(item, 'complete', 'verified_sha_and_terminal_page')
-        # Full last page: page-limit truncation cannot be excluded without proof.
+        # An exact API 'found' count must agree with all stored pages, even when
+        # the final page is short. Otherwise we would incorrectly mark a
+        # truncated response COMPLETE and skip its missing observations forever.
+        found = None
         try:
             obj = json.loads(last_path.read_text(encoding='utf-8'))
-            found = obj.get('meta', {}).get('found')
-            if type(found) is int and found <= last_num * limit:
-                return AuditResult(item, 'complete', 'verified_sha_and_total_count')
+            if isinstance(obj, dict) and isinstance(obj.get('meta'), dict):
+                found = obj['meta'].get('found')
         except (OSError, UnicodeError, TypeError, ValueError, AttributeError):
             pass
+        total_rows = sum(n for _, n, _ in pages)
+        if type(found) is int and found != total_rows:
+            return AuditResult(item, 'review', 'pagination_found_count_mismatch')
+        if last_rows < limit:
+            return AuditResult(item, 'complete', 'verified_sha_and_terminal_page')
+        # A full final page requires proof that more pages are not missing.
+        if type(found) is int and found == total_rows:
+            return AuditResult(item, 'complete', 'verified_sha_and_total_count')
         return AuditResult(item, 'review', 'pagination_terminal_unproven')
 
     if item.source == 'firms':

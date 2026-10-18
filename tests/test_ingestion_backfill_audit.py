@@ -94,6 +94,18 @@ class BackfillAuditTests(unittest.TestCase):
         self.add_aq(rows=100, found=100)
         self.assertEqual(self.check(PlanItem('openaq', 'HANOI', '2024-11-01', '2024-11-02', sensor_id=21632)).status, 'complete')
 
+    def test_openaq_short_terminal_but_exact_found_count_higher_needs_review(self):
+        self.add_aq(rows=1, found=24)
+        result = self.check(PlanItem('openaq', 'HANOI', '2024-11-01', '2024-11-02', sensor_id=21632))
+        self.assertEqual(result.status, 'review')
+        self.assertEqual(result.reason, 'pagination_found_count_mismatch')
+
+    def test_openaq_multi_page_exact_found_count_agrees(self):
+        self.add_aq(rows=100, page=1, found=120)
+        self.add_aq(rows=20, page=2, found=120)
+        result = self.check(PlanItem('openaq', 'HANOI', '2024-11-01', '2024-11-02', sensor_id=21632))
+        self.assertEqual(result.status, 'complete')
+
     def test_openaq_missing_middle_page_review(self):
         self.add_aq(rows=100, page=1)
         self.add_aq(rows=12, page=3)
