@@ -15,7 +15,6 @@ ENV PYSPARK_DRIVER_PYTHON=/usr/local/bin/python
 ENV SPARK_LOCAL_IP=127.0.0.1
 
 # Cai PySpark va thu vien doc YAML
-RUN pip install --no-cache-dir \
-    pyspark==3.5.8 PyYAML==6.0.3
+RUN pip install --no-cache-dir pyspark==3.5.8 PyYAML==6.0.3 eccodes==2.50.0
 
 WORKDIR /app

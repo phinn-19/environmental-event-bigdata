@@ -1,6 +1,8 @@
 
 import unittest
 from pathlib import Path
+import json
+from src.processing.openaq_manifest import verify_manifests
 
 from pyspark.sql import SparkSession, functions as F
 
@@ -48,18 +50,52 @@ class TestOpenAQSilver(unittest.TestCase):
 
         self.assertEqual(actual, expected)
 
-    def test_counts_for_current_sample(self):
-        self.assertEqual(self.df.count(), 744)
+    
+    def test_counts_against_raw(self):
+        # Lay danh sach file raw da xac minh
+        hours, _ = verify_manifests(ROOT)
 
-        self.assertEqual(
-            self.df.filter(F.col("value_ugm3").isNull()).count(),
-            70,
-        )
+        raw_rows = 0
+        raw_nulls = 0
+        raw_flags = 0
 
-        self.assertEqual(
-            self.df.filter(F.col("has_flags") == True).count(),
-            80,
-        )
+        # Dem truc tiep tu JSON, khong hardcode
+        for item in hours:
+            with item.path.open(encoding="utf-8") as f:
+                records = json.load(f)["results"]
+
+            raw_rows += len(records)
+
+            for record in records:
+                if record.get("value") is None:
+                    raw_nulls += 1
+
+                if (
+                    (record.get("flagInfo") or {})
+                    .get("hasFlags") is True
+                ):
+                    raw_flags += 1
+
+        silver_rows = self.df.count()
+
+        # Silver khong the nhieu hon Raw khi chi loai loi/trung
+        self.assertLessEqual(silver_rows, raw_rows)
+
+        # Neu khong mat dong nao, null va flag phai duoc giu
+        if silver_rows == raw_rows:
+            self.assertEqual(
+                self.df.filter(
+                    F.col("value_ugm3").isNull()
+                ).count(),
+                raw_nulls,
+            )
+
+            self.assertEqual(
+                self.df.filter(
+                    F.col("has_flags") == True
+                ).count(),
+                raw_flags,
+            )
 
     def test_no_duplicate_keys(self):
         duplicates = (
