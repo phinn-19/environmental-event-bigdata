@@ -6,13 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "environmental-event-bigdata"
 version = "0.1.0"
 description = "Three-person Environmental Big Data project foundation (not a finished pipeline)"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = ["PyYAML>=6.0,<7.0"]
 
 [project.optional-dependencies]
 ingestion = [
     "cdsapi==0.7.7",
     "eccodes==2.49.0",
+]
+
+processing = [
+    "pyspark==3.5.8",
+    "eccodes>=2.49.0,<2.51.0",
 ]
 
 [tool.setuptools]
