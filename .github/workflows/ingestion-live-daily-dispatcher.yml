@@ -1,0 +1,55 @@
+name: Sprint 14 - Opt-in daily live dispatcher
+
+# Default-branch registered entry point. Schedule is disabled unless the
+# repository variable INGESTION_LIVE_SCHEDULE_ENABLED equals the string true.
+on:
+  schedule:
+    - cron: '47 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: environmental-event-live-dispatcher
+  cancel-in-progress: false
+
+jobs:
+  dispatch-guarded:
+    if: >-
+      ${{ github.repository == 'phinn-19/environmental-event-bigdata' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'workflow_dispatch' ||
+           (github.event_name == 'schedule' &&
+            vars.INGESTION_LIVE_SCHEDULE_ENABLED == 'true')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch one bounded all-source tick on develop
+        uses: actions/github-script@v7
+        env:
+          SCHEDULE_ENABLED: ${{ vars.INGESTION_LIVE_SCHEDULE_ENABLED }}
+        with:
+          script: |
+            const scheduled = context.eventName === 'schedule';
+            const enabled = process.env.SCHEDULE_ENABLED === 'true';
+            const live = scheduled && enabled;
+            if (scheduled && !live) {
+              core.setFailed('STOP: daily live schedule is not enabled');
+              return;
+            }
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ingestion-multisource-live.yml',
+              ref: 'develop',
+              inputs: {
+                source: 'all',
+                mode: live ? 'live_acquire' : 'preview',
+                approve_source_api: live ? 'true' : 'false',
+                approve_cloud_upload: live ? 'true' : 'false'
+              }
+            });
+            core.info(live
+              ? 'Opt-in one-day live dispatch accepted; verify downstream result.'
+              : 'Manual preview-only dispatch accepted; no live authorization.');
