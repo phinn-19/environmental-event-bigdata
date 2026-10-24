@@ -76,13 +76,28 @@ jobs:
           import os
 
           today = dt.datetime.now(dt.timezone.utc).date()
-          target = today - dt.timedelta(days=2)
+
+          if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+              target = dt.date(2026, 10, 22)
+
+              if not (
+                  dt.timedelta(days=2)
+                  <= today - target
+                  <= dt.timedelta(days=7)
+              ):
+                  raise SystemExit(
+                      "STOP: reviewed pilot day outside safe UTC window"
+                  )
+          else:
+              target = today - dt.timedelta(days=2)
+
+          as_of = target + dt.timedelta(days=2)
 
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as f:
-              f.write(f"TICK_AS_OF={today.isoformat()}\n")
+              f.write(f"TICK_AS_OF={as_of.isoformat()}\n")
               f.write(f"SCOPE_DAY={target.isoformat()}\n")
 
-          print("UTC AS-OF:", today)
+          print("UTC AS-OF:", as_of)
           print("TARGET DAY:", target)
           PY
 
@@ -104,7 +119,7 @@ jobs:
         run: |
           set -euo pipefail
           python -m src.ingestion.daily_plan \
-            --source openaq --region HANOI --sensor-id 21632 \
+            --source openaq --region HANOI --sensor-id 13502154 \
             --as-of "$TICK_AS_OF" --lag-days 2 --lookback-days 1 \
             --max-candidates 1 --format json \
             > "$RUNNER_TEMP/openaq_one_day_plan.json"
@@ -118,13 +133,13 @@ jobs:
           assert doc['state'] in ('ready_for_manual_review', 'nothing_to_do')
           assert all(d['action'] in ('candidate', 'skip') for d in decisions)
           assert decisions[0]['item']['source'] == 'openaq'
-          assert decisions[0]['item']['sensor_id'] == 21632
+          assert decisions[0]['item']['sensor_id'] == 13502154
           assert decisions[0]['item']['start'] == os.environ['SCOPE_DAY']
           assert decisions[0]['item']['end'] == (dt.date.fromisoformat(os.environ['SCOPE_DAY']) + dt.timedelta(days=1)).isoformat()
           print('ONE-DAY SOURCE PLAN: PASS (candidate or already COMPLETE)')
           PY
           python -m src.ingestion.daily_cloud_workflow \
-            --source openaq --region HANOI --sensor-id 21632 \
+            --source openaq --region HANOI --sensor-id 13502154 \
             --as-of "$TICK_AS_OF" --lag-days 2 --lookback-days 1 \
             --max-candidates 1 --max-http-requests 3 \
             --max-bytes 2097152 --max-cloud-bytes 4194304
@@ -148,7 +163,7 @@ jobs:
           # Existing Daily Cloud Workflow re-gates after restore, acquires
           # at most one missing UTC day and publishes Raw before manifest.
           python -m src.ingestion.daily_cloud_workflow \
-            --source openaq --region HANOI --sensor-id 21632 \
+            --source openaq --region HANOI --sensor-id 13502154 \
             --as-of "$TICK_AS_OF" --lag-days 2 --lookback-days 1 \
             --max-candidates 1 --max-http-requests 3 \
             --max-bytes 2097152 --max-cloud-bytes 4194304 \
