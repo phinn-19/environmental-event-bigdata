@@ -1,0 +1,140 @@
+name: Sprint 11C - Bounded cloud tick (no source API)
+
+# On develop, only a read-only demonstration runs automatically when this
+# workflow changes. Manual dispatch needs the workflow on default branch.
+# Deliberately NO schedule and NO --approve-live anywhere in this workflow.
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/ingestion-cloud-tick.yml'
+      - 'src/ingestion/cloud_restore.py'
+      - 'src/ingestion/daily_cloud_workflow.py'
+      - 'tests/test_ingestion_cloud_tick_ci.py'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Safe mode; publishing existing COMPLETE data requires a separate token'
+        required: true
+        default: preview
+        type: choice
+        options: [preview, publish_existing]
+      as_of:
+        description: 'Reviewed UTC YYYY-MM-DD; lag=1 means inspect the previous UTC day'
+        required: true
+        default: '2024-11-06'
+        type: string
+      approve_publish_existing:
+        description: 'Explicitly confirm cloud-only publication; NEVER call source APIs'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+# Prevent overlapping runs of this workflow. NOT a cross-repository or
+# external desktop lock. Do not run another publisher at the same time.
+concurrency:
+  group: environmental-event-cloud-tick-single-writer
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    name: Restore, preview, optional cloud-only verified publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bounded workflow dependencies
+        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3'
+      - name: Verify Sprint 11C workflow guards
+        run: python -m unittest discover -s tests -p 'test_ingestion_cloud_tick_ci.py' -q
+      - name: Resolve and validate UTC tick
+        shell: bash
+        env:
+          REQUESTED_AS_OF: ${{ inputs.as_of }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
+            selected="$REQUESTED_AS_OF"
+          else
+            selected='2024-11-06'
+          fi
+          TICK_AS_OF="$selected" python - <<'PY'
+          import datetime as dt
+          import os
+          import re
+          value = os.environ['TICK_AS_OF']
+          if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value):
+              raise SystemExit('Invalid UTC as_of format')
+          day = dt.date.fromisoformat(value)
+          if not dt.date(2024, 1, 1) <= day <= dt.datetime.now(dt.timezone.utc).date():
+              raise SystemExit('UTC as_of outside reviewed bounds')
+          print('UTC tick validated:', value)
+          PY
+          printf 'TICK_AS_OF=%s\n' "$selected" >> "$GITHUB_ENV"
+      - name: Restore verified Raw state from Private Lake
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HF_TOKEN" ]]; then
+            echo 'HF_READ_TOKEN missing: fail closed'
+            exit 1
+          fi
+          python -m src.ingestion.cloud_restore \
+            --bucket CourseworkBigData/env-event-lake \
+            --prefix lake/v1 --approve-download --max-bytes 8388608
+      - name: Offline preview for the selected ERA5 day
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m src.ingestion.daily_cloud_workflow \
+            --source era5 --region HANOI \
+            --as-of "$TICK_AS_OF" --lag-days 1 --lookback-days 1 \
+            --max-candidates 1 --max-bytes 8388608 \
+            --max-cloud-bytes 1048576 \
+            | tee "$RUNNER_TEMP/cloud_tick_preview.txt"
+          echo 'CLOUD TICK: PREVIEW COMPLETE; source API calls=0; cloud writes=0'
+      - name: Explicitly authorized CLOUD-ONLY publishing of COMPLETE data
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              inputs.mode == 'publish_existing' &&
+              inputs.approve_publish_existing == true }}
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HF_TOKEN" ]]; then
+            echo 'HF_WRITE_TOKEN missing: fail closed'
+            exit 1
+          fi
+          grep -Fxq 'LOCAL COMPLETE: 1; PENDING: 0; ACQUIRED THIS RUN: 0' \
+            "$RUNNER_TEMP/cloud_tick_preview.txt"
+          # Cloud-only publishing for verified COMPLETE input only.
+          python -m src.ingestion.daily_cloud_workflow \
+            --source era5 --region HANOI \
+            --as-of "$TICK_AS_OF" --lag-days 1 --lookback-days 1 \
+            --max-candidates 1 --max-bytes 8388608 \
+            --max-cloud-bytes 1048576 \
+            --approve-upload
+      - name: Fail closed on unconfirmed publication request
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              inputs.mode == 'publish_existing' &&
+              inputs.approve_publish_existing != true }}
+        run: |
+          echo 'CLOUD TICK: STOP (publish_existing requires explicit confirmation)'
+          exit 1
+      - name: Safe outcome
+        run: |
+          echo 'SPRINT 11C-A: NO SCHEDULE, NO SOURCE API CALLS, NO LIVE ACQUISITION.'
+          echo 'A publish_existing manual run may upload only fully verified Raw+Manifest.'
