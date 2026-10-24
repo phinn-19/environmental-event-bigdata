@@ -51,8 +51,23 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
         run: python -m src.ingestion.cloud_scheduler_probe --bucket CourseworkBigData/env-event-lake --prefix lake/v1
+      - name: Restore and verify cloud Raw on ephemeral runner (optional secret)
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo 'CLOUD RESTORE: SKIPPED (read token not configured)'
+            exit 0
+          fi
+          python -m src.ingestion.cloud_restore --approve-download --max-bytes 8388608
+          result="$(python -m src.ingestion.daily_cloud_workflow \
+            --source era5 --region HANOI --as-of 2024-11-06 \
+            --lag-days 1 --lookback-days 1)"
+          printf '%s\n' "$result"
+          grep -Fq 'LOCAL COMPLETE: 1; PENDING: 0; ACQUIRED THIS RUN: 0' <<< "$result"
       - name: State limitations
         run: |
           echo 'PILOT: READ ONLY; NO LIVE SOURCE API; NO CLOUD UPLOAD OR DELETE'
-          echo 'Local daily preview on an empty ephemeral runner is NOT cloud-aware.'
+          echo 'Restore verifies bounded cloud Raw SHA-256; acquisition stays DISABLED.'
           echo 'Scheduled ingestion is disabled; restore/verify cloud state before enabling live jobs.'
