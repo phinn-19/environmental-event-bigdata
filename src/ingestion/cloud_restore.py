@@ -15,6 +15,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Callable
 
@@ -70,6 +71,7 @@ def restore(
     *, bucket: str, prefix: str, root: Path, token: str,
     max_bytes: int = DEFAULT_MAX_BYTES,
     get_info: Callable, list_tree: Callable, download: Callable,
+    scope_source: str | None = None, scope_day: str | None = None,
 ) -> RestoreResult:
     """Restore verified pairs. HF API calls are read-only; local writes are bounded.
 
@@ -83,6 +85,18 @@ def restore(
         raise ValueError("HF read token required")
     if type(max_bytes) is not int or not 1 <= max_bytes <= HARD_MAX_BYTES:
         raise ValueError("invalid byte budget")
+    if (scope_source is None) != (scope_day is None):
+        raise ValueError("scope source and day must be provided together")
+    if scope_source is not None and scope_source not in ("openaq", "firms", "era5"):
+        raise ValueError("invalid scope source")
+    selected_day = None
+    if scope_day is not None:
+        try:
+            selected_day = date.fromisoformat(scope_day)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid scope day") from exc
+        if selected_day.isoformat() != scope_day:
+            raise ValueError("invalid scope day")
     if not root.is_dir() or root.is_symlink():
         raise ValueError("restore root must be an existing non-symlink directory")
     root = root.resolve()
@@ -90,20 +104,36 @@ def restore(
         raise ValueError("private bucket required")
 
     raw_prefix = prefix + "/data/raw/"
+    cloud_source = "nasa_firms" if scope_source == "firms" else scope_source
+    listing_prefix = raw_prefix if cloud_source is None else raw_prefix + cloud_source + "/"
+    day_path = None
+    if selected_day is not None:
+        if scope_source == "firms":
+            # FIRMS partitions by request start month, not by day.
+            day_path = f"/year={selected_day:%Y}/month={selected_day:%m}/"
+        else:
+            day_path = f"/year={selected_day:%Y}/month={selected_day:%m}/day={selected_day:%d}/"
     objects = {}
-    for node in list_tree(bucket, prefix=raw_prefix, recursive=True, token=token):
+    for node in list_tree(bucket, prefix=listing_prefix, recursive=True, token=token):
         if getattr(node, "type", None) != "file":
             continue
         key, size = getattr(node, "path", None), getattr(node, "size", None)
-        if (not isinstance(key, str) or not key.startswith(raw_prefix)
+        if (not isinstance(key, str) or not key.startswith(listing_prefix)
                 or not _raw_rel_ok(key[len(prefix) + 1:])
                 or type(size) is not int or size < 0):
             raise ValueError("invalid cloud object metadata")
+        if day_path is not None and day_path not in key:
+            continue
         if key in objects:
             raise ValueError("duplicate cloud object key")
         objects[key] = size
         if len(objects) > MAX_OBJECTS:
             raise ValueError("cloud object limit exceeded")
+    # An empty selected day is valid: acquisition may not have happened yet.
+    # Full restore retains its strict non-empty inventory contract.
+    if selected_day is not None and not objects:
+        return RestoreResult(0, 0, 0, 0, 0)
+
     manifests = sorted(key for key in objects if key.endswith(".manifest.json"))
     raw_keys = set(objects).difference(manifests)
     if not manifests or len(manifests) > MAX_MANIFESTS or len(raw_keys) != len(manifests):
@@ -200,6 +230,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prefix", default=DEFAULT_PREFIX)
     parser.add_argument("--root", default=".")
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
+    parser.add_argument("--scope-source", choices=("openaq", "firms", "era5"))
+    parser.add_argument("--scope-day", help="UTC date YYYY-MM-DD")
     parser.add_argument("--approve-download", action="store_true",
                         help="Authorize READ-ONLY remote access and VERIFIED local Raw creation")
     args = parser.parse_args(argv)
@@ -211,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
         from huggingface_hub import bucket_info, list_bucket_tree, download_bucket_files
         result = restore(bucket=args.bucket, prefix=args.prefix, root=Path(args.root),
                          token=token, max_bytes=args.max_bytes,
+                         scope_source=args.scope_source,
+                         scope_day=args.scope_day,
                          get_info=bucket_info, list_tree=list_bucket_tree,
                          download=download_bucket_files)
     except Exception as exc:
