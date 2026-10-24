@@ -1,0 +1,44 @@
+name: Sprint 12 - Guarded daily OpenAQ preview dispatcher
+
+on:
+  schedule:
+    - cron: '37 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: environmental-event-daily-preview-dispatcher
+  cancel-in-progress: false
+
+jobs:
+  dispatch-preview:
+    if: >-
+      ${{ github.repository == 'phinn-19/environmental-event-bigdata' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'workflow_dispatch' ||
+           (github.event_name == 'schedule' &&
+            vars.INGESTION_PREVIEW_SCHEDULE_ENABLED == 'true')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch preview-only workflow on develop
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const response = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ingestion-dynamic-live.yml',
+              ref: 'develop',
+              inputs: {
+                mode: 'preview',
+                approve_source_api: 'false',
+                approve_cloud_upload: 'false'
+              }
+            });
+            core.info('Preview-only dispatch accepted for develop.');
+            if (response.data?.html_url) {
+              core.info(`Workflow URL: ${response.data.html_url}`);
+            }
