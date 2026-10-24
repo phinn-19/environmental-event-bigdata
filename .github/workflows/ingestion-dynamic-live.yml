@@ -69,6 +69,8 @@ jobs:
           exit 1
       - name: Resolve bounded UTC target
         shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.mode || 'preview' }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -77,7 +79,10 @@ jobs:
 
           today = dt.datetime.now(dt.timezone.utc).date()
 
-          if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+          if (
+              os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+              and os.environ.get("REQUESTED_MODE") == "live_acquire"
+          ):
               target = dt.date(2026, 10, 22)
 
               if not (
@@ -114,6 +119,113 @@ jobs:
           python -m src.ingestion.cloud_restore \
             --bucket CourseworkBigData/env-event-lake --prefix lake/v1 \
             --approve-download --max-bytes 2097152 --scope-source openaq --scope-day "$SCOPE_DAY"
+      - name: Restore verified OpenAQ location metadata (read only)
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import tempfile
+          from pathlib import Path
+
+          from huggingface_hub import download_bucket_files
+
+          bucket = "CourseworkBigData/env-event-lake"
+          prefix = "lake/v1"
+          raw_rel = "data/raw/openaq/locations/d6897a849fb938ce27a0.json"
+          mf_rel = "data/raw/openaq/manifests/locations/d6897a849fb938ce27a0.manifest.json"
+
+          expected_sha = (
+              "1ae2d6f4b715ea46888a8bade781740"
+              "e28b98595b09b9233cfe91909e17bf3b5"
+          )
+
+          with tempfile.TemporaryDirectory() as tempdir:
+              tmp = Path(tempdir)
+              raw_tmp = tmp / "metadata-raw"
+              mf_tmp = tmp / "metadata-manifest"
+
+              download_bucket_files(
+                  bucket,
+                  files=[
+                      (f"{prefix}/{raw_rel}", str(raw_tmp)),
+                      (f"{prefix}/{mf_rel}", str(mf_tmp)),
+                  ],
+              )
+
+              raw = raw_tmp.read_bytes()
+              mf = mf_tmp.read_bytes()
+
+              if len(raw) != 1473 or len(mf) != 528:
+                  raise RuntimeError("Metadata snapshot size mismatch")
+
+              if hashlib.sha256(raw).hexdigest() != expected_sha:
+                  raise RuntimeError("Metadata Raw SHA-256 mismatch")
+
+              manifest = json.loads(mf)
+              payload = json.loads(raw)
+
+              if manifest.get("status") != "success":
+                  raise RuntimeError("Metadata manifest is not successful")
+
+              if (
+                  manifest.get("start_utc") is not None
+                  or manifest.get("end_utc") is not None
+              ):
+                  raise RuntimeError("Invalid metadata UTC contract")
+
+              if expected_sha not in mf.decode("utf-8").lower():
+                  raise RuntimeError("Manifest does not match Raw SHA-256")
+
+              rows = payload.get("results", [])
+              if len(rows) != 1 or rows[0].get("id") != 4946813:
+                  raise RuntimeError("Unexpected location ID")
+
+              location = rows[0]
+              sensors = [
+                  item for item in location.get("sensors", [])
+                  if item.get("id") == 13502154
+                  and item.get("parameter", {}).get("name") == "pm25"
+              ]
+
+              if len(sensors) != 1:
+                  raise RuntimeError("Expected PM2.5 sensor missing")
+
+              coords = location.get("coordinates", {})
+              lat, lon = coords.get("latitude"), coords.get("longitude")
+
+              if not (
+                  type(lat) in (float, int)
+                  and type(lon) in (float, int)
+                  and 20.75 <= lat <= 21.25
+                  and 105.5 <= lon <= 106.0
+              ):
+                  raise RuntimeError("Metadata outside HANOI bbox")
+
+              for relative, content in (
+                  (raw_rel, raw),
+                  (mf_rel, mf),
+              ):
+                  path = Path(relative)
+                  if path.exists():
+                      if not path.is_file() or path.read_bytes() != content:
+                          raise RuntimeError(
+                              "Existing metadata differs; refusing overwrite"
+                          )
+                  else:
+                      path.parent.mkdir(parents=True, exist_ok=True)
+                      path.write_bytes(content)
+
+              print("METADATA RESTORE: PASS")
+              print("LOCATION: 4946813; SENSOR: 13502154")
+              print("RAW SHA-256: PASS")
+              print("OBJECTS: 2; BYTES VERIFIED: 2001")
+              print("READ ONLY CLOUD; NO PROVIDER API")
+          PY
+
       - name: Preview exactly one source/day, fail closed on HOLD
         shell: bash
         run: |
