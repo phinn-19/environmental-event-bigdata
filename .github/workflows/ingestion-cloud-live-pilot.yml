@@ -1,0 +1,137 @@
+name: Sprint 11C-B - Manual OpenAQ cloud acquisition pilot
+
+# Push to develop is PREVIEW ONLY. Live acquisition is never a push or schedule.
+# workflow_dispatch requires the file on the repository default branch.
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/ingestion-cloud-live-pilot.yml'
+      - 'tests/test_ingestion_cloud_live_ci.py'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Preview by default; live_acquire requires two explicit confirmations'
+        required: true
+        type: choice
+        default: preview
+        options: [preview, live_acquire]
+      approve_source_api:
+        description: 'Authorize at most 3 OpenAQ requests for ONE UTC day'
+        required: true
+        type: boolean
+        default: false
+      approve_cloud_upload:
+        description: 'Authorize verified Raw+Manifest upload to HF Private Lake'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Same single-writer group as the cloud-only publisher workflow (Sprint 11C-A).
+# This does NOT guard any external laptop or another repository.
+concurrency:
+  group: environmental-event-cloud-tick-single-writer
+  cancel-in-progress: false
+
+jobs:
+  one-day-openaq:
+    name: Restore; review; optionally acquire and publish one OpenAQ day
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Reviewed one-day pilot: as_of - lag(1) -> 2024-11-05 UTC.
+      TICK_AS_OF: '2024-11-06'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimal dependencies
+        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3'
+      - name: Verify live workflow guard tests
+        run: python -m unittest discover -s tests -p 'test_ingestion_cloud_live_ci.py' -q
+      - name: Refuse unconfirmed live request
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              inputs.mode == 'live_acquire' &&
+              (inputs.approve_source_api != true || inputs.approve_cloud_upload != true) }}
+        run: |
+          echo 'STOP: Both approvals are required for live acquisition'
+          exit 1
+      - name: Restore previously published cloud state (read only)
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HF_TOKEN" ]]; then
+            echo 'STOP: HF_READ_TOKEN is not configured'
+            exit 1
+          fi
+          python -m src.ingestion.cloud_restore \
+            --bucket CourseworkBigData/env-event-lake --prefix lake/v1 \
+            --approve-download --max-bytes 8388608
+      - name: Preview exactly one source/day, fail closed on HOLD
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m src.ingestion.daily_plan \
+            --source openaq --region HANOI --sensor-id 21632 \
+            --as-of "$TICK_AS_OF" --lag-days 1 --lookback-days 1 \
+            --max-candidates 1 --format json \
+            > "$RUNNER_TEMP/openaq_one_day_plan.json"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          doc = json.loads((Path(os.environ['RUNNER_TEMP']) / 'openaq_one_day_plan.json').read_text())
+          decisions = doc['decisions']
+          assert doc['as_of_utc'] == '2024-11-06'
+          assert doc['candidate_count'] in (0, 1) and len(decisions) == 1
+          assert doc['state'] in ('ready_for_manual_review', 'nothing_to_do')
+          assert all(d['action'] in ('candidate', 'skip') for d in decisions)
+          assert decisions[0]['item']['source'] == 'openaq'
+          assert decisions[0]['item']['sensor_id'] == 21632
+          assert decisions[0]['item']['start'] == '2024-11-05'
+          assert decisions[0]['item']['end'] == '2024-11-06'
+          print('ONE-DAY SOURCE PLAN: PASS (candidate or already COMPLETE)')
+          PY
+          python -m src.ingestion.daily_cloud_workflow \
+            --source openaq --region HANOI --sensor-id 21632 \
+            --as-of "$TICK_AS_OF" --lag-days 1 --lookback-days 1 \
+            --max-candidates 1 --max-http-requests 3 \
+            --max-bytes 2097152 --max-cloud-bytes 4194304
+          echo 'CLOUD LIVE PILOT: PREVIEW PASS (no source API, no cloud writes)'
+      - name: Explicitly approved one-day OpenAQ API plus cloud publication
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' &&
+              inputs.mode == 'live_acquire' &&
+              inputs.approve_source_api == true &&
+              inputs.approve_cloud_upload == true }}
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$HF_TOKEN" || -z "$OPENAQ_API_KEY" ]]; then
+            echo 'STOP: HF_WRITE_TOKEN and OPENAQ_API_KEY must be configured'
+            exit 1
+          fi
+          # Existing Daily Cloud Workflow re-gates after restore, acquires
+          # at most one missing UTC day and publishes Raw before manifest.
+          python -m src.ingestion.daily_cloud_workflow \
+            --source openaq --region HANOI --sensor-id 21632 \
+            --as-of "$TICK_AS_OF" --lag-days 1 --lookback-days 1 \
+            --max-candidates 1 --max-http-requests 3 \
+            --max-bytes 2097152 --max-cloud-bytes 4194304 \
+            --approve-live --approve-upload
+      - name: Safe outcome
+        if: ${{ success() }}
+        run: |
+          echo 'NO SCHEDULE. Live requires manual dispatch plus two approvals and two secrets.'
+          echo 'Do not interpret a preview-only green run as a live acquisition.'
