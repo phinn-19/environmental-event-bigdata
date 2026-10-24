@@ -83,5 +83,44 @@ class DynamicLiveGuards(unittest.TestCase):
         self.assertNotIn("cron:", text)
 
 
+
+    def test_reviewed_sensor_and_manual_day(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertEqual(
+            text.count("--sensor-id 13502154"), 3
+        )
+        self.assertNotIn("--sensor-id 21632", text)
+
+        self.assertIn(
+            "assert decisions[0]['item']['sensor_id'] == 13502154",
+            text,
+        )
+
+        self.assertIn(
+            "target = dt.date(2026, 10, 22)",
+            text,
+        )
+        self.assertIn(
+            'os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"',
+            text,
+        )
+        self.assertIn(
+            "target = today - dt.timedelta(days=2)",
+            text,
+        )
+        self.assertIn(
+            "as_of = target + dt.timedelta(days=2)",
+            text,
+        )
+        self.assertIn(
+            "TICK_AS_OF={as_of.isoformat()}",
+            text,
+        )
+        self.assertIn(
+            "dt.timedelta(days=7)",
+            text,
+        )
+
 if __name__ == "__main__":
     unittest.main()
