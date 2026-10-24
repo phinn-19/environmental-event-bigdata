@@ -1,0 +1,58 @@
+name: Sprint 11 - Ingestion cloud pilot (read only)
+
+# Push on develop enables CI before promotion. Scheduled/manual runs are
+# available only once this workflow is also present on default branch (main).
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/ingestion-cloud-pilot.yml'
+      - 'src/ingestion/**'
+      - 'src/common/**'
+      - 'tests/test_ingestion*.py'
+      - 'configs/project.yaml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * *'
+      timezone: 'Asia/Bangkok'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ingestion-cloud-pilot-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  review-only:
+    name: Ingestion tests and cloud inventory (no writes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install minimum pilot dependencies
+        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3'
+      - name: Verify Ingestion unit tests only
+        run: python -m unittest discover -s tests -p 'test_ingestion*.py' -q
+      - name: Preview UTC daily plan on ephemeral runner
+        shell: bash
+        run: |
+          as_of="$(date -u +%F)"
+          python -m src.ingestion.daily_cloud_workflow \
+            --source era5 --region HANOI \
+            --as-of "$as_of" --lag-days 7 --lookback-days 1 \
+            --max-candidates 1
+      - name: Read-only cloud inventory (optional secret)
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: python -m src.ingestion.cloud_scheduler_probe --bucket CourseworkBigData/env-event-lake --prefix lake/v1
+      - name: State limitations
+        run: |
+          echo 'PILOT: READ ONLY; NO LIVE SOURCE API; NO CLOUD UPLOAD OR DELETE'
+          echo 'Local daily preview on an empty ephemeral runner is NOT cloud-aware.'
+          echo 'Scheduled ingestion is disabled; restore/verify cloud state before enabling live jobs.'
