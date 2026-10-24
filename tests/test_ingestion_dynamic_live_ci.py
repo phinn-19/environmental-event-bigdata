@@ -122,5 +122,34 @@ class DynamicLiveGuards(unittest.TestCase):
             text,
         )
 
+
+    def test_metadata_readback_and_dynamic_preview(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("Restore verified OpenAQ location metadata", text)
+        self.assertIn("secrets.HF_READ_TOKEN", text)
+        self.assertIn("download_bucket_files(", text)
+        self.assertIn("Metadata Raw SHA-256 mismatch", text)
+        self.assertIn("refusing overwrite", text)
+        self.assertIn("METADATA RESTORE: PASS", text)
+        self.assertIn("BYTES VERIFIED: 2001", text)
+
+        self.assertIn(
+            'REQUESTED_MODE: ${{ inputs.mode || \'preview\' }}',
+            text,
+        )
+        self.assertIn(
+            'os.environ.get("REQUESTED_MODE") == "live_acquire"',
+            text,
+        )
+        self.assertIn(
+            "target = today - dt.timedelta(days=2)",
+            text,
+        )
+        self.assertIn(
+            "target = dt.date(2026, 10, 22)",
+            text,
+        )
+
 if __name__ == "__main__":
     unittest.main()
