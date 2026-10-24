@@ -1,0 +1,111 @@
+name: Sprint 14 - Guarded multi-source one-day live
+
+# No cron. The default-branch dispatcher will be added after live acceptance.
+on:
+  push:
+    branches: [develop]
+    paths:
+      - '.github/workflows/ingestion-multisource-live.yml'
+      - 'src/ingestion/daily_live_tick.py'
+      - 'tests/test_ingestion_multisource_live_ci.py'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'One reviewed source or all three sequentially'
+        type: choice
+        required: true
+        default: openaq
+        options: [openaq, firms, era5, all]
+      mode:
+        description: 'Preview is read-only cloud; live requires both approvals'
+        type: choice
+        required: true
+        default: preview
+        options: [preview, live_acquire]
+      approve_source_api:
+        description: 'Authorize bounded provider acquisition'
+        type: boolean
+        required: true
+        default: false
+      approve_cloud_upload:
+        description: 'Authorize verified HF private cloud upload'
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+# Shared with existing ingestion publishers; sequential sources in one job.
+concurrency:
+  group: environmental-event-cloud-tick-single-writer
+  cancel-in-progress: false
+
+jobs:
+  bounded-tick:
+    if: >-
+      ${{ github.repository == 'phinn-19/environmental-event-bigdata' &&
+          github.ref == 'refs/heads/develop' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout reviewed develop source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install bounded ingestion dependencies
+        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3'
+      - name: Install ERA5 live-only dependencies
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live_acquire' &&
+              (inputs.source == 'era5' || inputs.source == 'all') }}
+        run: python -m pip install 'cdsapi>=0.7,<1' 'eccodes>=2,<3'
+      - name: Validate workflow and one-day guards
+        run: |
+          python -m unittest discover -s tests -p 'test_ingestion_multisource_live_ci.py' -q
+          python -m unittest discover -s tests -p 'test_ingestion_daily_cloud_workflow.py' -q
+      - name: Refuse unconfirmed live dispatch
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live_acquire' &&
+              (inputs.approve_source_api != true || inputs.approve_cloud_upload != true) }}
+        run: |
+          echo 'STOP: live_acquire requires both explicit approvals'
+          exit 1
+      - name: Offline bounded preview on push
+        if: ${{ github.event_name == 'push' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m src.ingestion.daily_live_tick --source all --mode offline
+      - name: Reviewed preview with cloud restore (never acquire or upload)
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'preview' }}
+        shell: bash
+        env:
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          python -m src.ingestion.daily_live_tick --source "$SOURCE" --mode preview
+      - name: Explicitly approved acquisition and verified publication
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live_acquire' &&
+              inputs.approve_source_api == true && inputs.approve_cloud_upload == true }}
+        shell: bash
+        env:
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+          CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
+          CDSAPI_URL: https://cds.climate.copernicus.eu/api
+          SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          python -m src.ingestion.daily_live_tick --source "$SOURCE" --mode live \
+            --approve-api --approve-cloud
