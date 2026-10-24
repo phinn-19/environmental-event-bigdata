@@ -1,0 +1,62 @@
+name: Sprint 11D - Dynamic OpenAQ daily preview
+
+on:
+  push:
+    branches:
+      - feat/ingestion-daily-scheduler-guarded
+      - develop
+    paths:
+      - '.github/workflows/ingestion-daily-preview.yml'
+      - 'src/ingestion/**'
+      - 'src/common/**'
+      - 'tests/test_ingestion_daily_cloud_workflow.py'
+
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  daily-preview:
+    name: Offline UTC ingestion preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install offline dependencies
+        run: python -m pip install 'PyYAML>=6,<7'
+
+      - name: Run targeted tests
+        run: python -m unittest discover -s tests -p 'test_ingestion_daily_cloud_workflow.py' -q
+
+      - name: Preview current UTC window
+        shell: bash
+        run: |
+          set -euo pipefail
+          as_of="$(date -u +%F)"
+
+          echo "UTC AS-OF: $as_of"
+
+          python -m src.ingestion.daily_plan \
+            --source openaq --region HANOI --sensor-id 21632 \
+            --as-of "$as_of" --lag-days 2 --lookback-days 1 \
+            --max-candidates 1 --format json
+
+          python -m src.ingestion.daily_cloud_workflow \
+            --source openaq --region HANOI --sensor-id 21632 \
+            --as-of "$as_of" --lag-days 2 --lookback-days 1 \
+            --max-candidates 1 --max-http-requests 3 \
+            --max-bytes 2097152 --max-cloud-bytes 4194304
+
+          echo 'PREVIEW ONLY: no source API, secrets or cloud writes.'
