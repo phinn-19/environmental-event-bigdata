@@ -1,0 +1,109 @@
+name: Sprint 11D-C - Scoped HF cloud readback
+
+on:
+  push:
+    branches:
+      - feat/ingestion-scoped-cloud-readback
+    paths:
+      - '.github/workflows/ingestion-scoped-cloud-readback.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scoped-readback:
+    name: Verified read-only OpenAQ restore
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3'
+
+      - name: Run restore unit tests
+        run: python -m unittest discover -s tests -p 'test_ingestion_cloud_restore.py' -q
+
+      - name: Restore selected OpenAQ day twice
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HF_TOKEN:-}" ]]; then
+            echo 'STOP: HF_READ_TOKEN missing'
+            exit 1
+          fi
+
+          root="$RUNNER_TEMP/scoped-restore"
+          mkdir -p "$root"
+
+          echo '=== FIRST CLOUD READBACK ==='
+          python -m src.ingestion.cloud_restore \
+            --bucket CourseworkBigData/env-event-lake \
+            --prefix lake/v1 \
+            --root "$root" \
+            --scope-source openaq \
+            --scope-day 2024-11-05 \
+            --max-bytes 2097152 \
+            --approve-download | tee "$RUNNER_TEMP/restore1.log"
+
+          echo '=== IDEMPOTENT SECOND READBACK ==='
+          python -m src.ingestion.cloud_restore \
+            --bucket CourseworkBigData/env-event-lake \
+            --prefix lake/v1 \
+            --root "$root" \
+            --scope-source openaq \
+            --scope-day 2024-11-05 \
+            --max-bytes 2097152 \
+            --approve-download | tee "$RUNNER_TEMP/restore2.log"
+
+          python - "$RUNNER_TEMP/restore1.log" "$RUNNER_TEMP/restore2.log" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          pattern = re.compile(
+              r"CLOUD RESTORE: PASS "
+              r"\(raw=(\d+), manifests=(\d+), "
+              r"created=(\d+), reused=(\d+), "
+              r"bytes_verified=(\d+)\)"
+          )
+
+          def read_result(path):
+              content = Path(path).read_text(encoding="utf-8")
+              match = pattern.search(content)
+              if not match or "RAW SHA-256: PASS" not in content:
+                  raise SystemExit("STOP: Missing restore verification")
+              return tuple(map(int, match.groups()))
+
+          first = read_result(sys.argv[1])
+          second = read_result(sys.argv[2])
+
+          raw, manifests, created, reused, size = first
+
+          if not (
+              raw > 0
+              and raw == manifests
+              and created == raw + manifests
+              and reused == 0
+              and size > 0
+          ):
+              raise SystemExit("STOP: First restore not verified")
+
+          if second != (raw, manifests, 0, raw + manifests, size):
+              raise SystemExit("STOP: Restore idempotency mismatch")
+
+          print("SCOPED CLOUD READBACK: PASS")
+          print("RESTORE IDEMPOTENCY: PASS")
+          PY
