@@ -89,9 +89,13 @@ jobs:
             echo 'HF_READ_TOKEN missing: fail closed'
             exit 1
           fi
+          # Scope cloud restore to the ERA5 day chosen by the existing tick.
+          # Do not restore unrelated historical/replay acquisitions in the lake.
+          RESTORE_DAY="$(python -c 'import datetime as dt, os; print((dt.date.fromisoformat(os.environ["TICK_AS_OF"]) - dt.timedelta(days=1)).isoformat())')"
           python -m src.ingestion.cloud_restore \
             --bucket CourseworkBigData/env-event-lake \
-            --prefix lake/v1 --approve-download --max-bytes 8388608
+            --prefix lake/v1 --approve-download --max-bytes 8388608 \
+            --scope-source era5 --scope-day "$RESTORE_DAY"
       - name: Offline preview for the selected ERA5 day
         shell: bash
         run: |

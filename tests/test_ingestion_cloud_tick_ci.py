@@ -51,6 +51,14 @@ class CloudTickCITests(unittest.TestCase):
         self.assertEqual(step['env']['HF_TOKEN'], '${{ secrets.HF_READ_TOKEN }}')
         self.assertIn('--approve-download', step['run'])
 
+    def test_restore_scoped_to_selected_era5_day(self):
+        step = next(s for s in self.steps if s['name'].startswith('Restore verified'))
+        command = step['run']
+        self.assertIn('os.environ["TICK_AS_OF"]', command)
+        self.assertIn('dt.timedelta(days=1)', command)
+        self.assertIn('--scope-source era5 --scope-day "$RESTORE_DAY"', command)
+        self.assertNotIn('--approve-upload', command)
+
     def test_publish_only_with_write_secret_and_explicit_mode(self):
         step = next(s for s in self.steps if s['name'].startswith('Explicitly authorized'))
         self.assertEqual(step['env']['HF_TOKEN'], '${{ secrets.HF_WRITE_TOKEN }}')
