@@ -141,7 +141,11 @@ def restore(
     if sum(objects[k] for k in manifests) > MAX_MANIFEST_BYTES:
         raise ValueError("manifest size limit exceeded")
     total_bytes = sum(objects.values())
-    if total_bytes > max_bytes:
+    # FIRMS has month-based paths, so unrelated days share this inventory.
+    # Limit the byte budget to the exact one-day selection after reading the
+    # bounded manifest headers; other source modes retain the early gate.
+    exact_firms_day = scope_source == "firms" and selected_day is not None
+    if not exact_firms_day and total_bytes > max_bytes:
         raise ValueError("cloud byte budget exceeded before download")
     # Reject ambiguous local destinations before network downloads.
     for key in objects:
@@ -154,6 +158,59 @@ def restore(
             batch = manifests[i:i + 12]
             download(bucket, files=[(key, str(staged[key])) for key in batch],
                      token=token, raise_on_missing_files=True)
+
+        if exact_firms_day:
+            # FIRMS partitions by the request START MONTH rather than UTC day.
+            # A month-level restore must not select historical or replay files
+            # for another day and then reject their acquisition_mode as live.
+            selected_manifests: list[str] = []
+            selected_raws: set[str] = set()
+            next_day = date.fromordinal(selected_day.toordinal() + 1)
+            for key in manifests:
+                path = staged[key]
+                if (not path.is_file() or path.stat().st_size != objects[key]
+                        or path.stat().st_size > 8192):
+                    raise ValueError("missing, oversized or inconsistent FIRMS manifest")
+                try:
+                    doc = json.loads(path.read_text(encoding="utf-8"))
+                except (UnicodeError, json.JSONDecodeError) as exc:
+                    raise ValueError("invalid FIRMS manifest") from exc
+                if not isinstance(doc, dict):
+                    raise ValueError("invalid FIRMS manifest body")
+                start, end = doc.get("start_utc"), doc.get("end_utc")
+                # Unknown windows cannot be safely classified as unrelated.
+                if (not isinstance(start, str) or not isinstance(end, str)
+                        or re.fullmatch(r"\d{4}-\d{2}-\d{2}T00:00:00Z", start) is None
+                        or re.fullmatch(r"\d{4}-\d{2}-\d{2}T00:00:00Z", end) is None):
+                    raise ValueError("invalid FIRMS manifest UTC window")
+                try:
+                    start_day = date.fromisoformat(start[:10])
+                    end_day = date.fromisoformat(end[:10])
+                except ValueError as exc:
+                    raise ValueError("invalid FIRMS manifest UTC window") from exc
+                if end_day <= start_day or (end_day - start_day).days > 5:
+                    raise ValueError("invalid FIRMS manifest request window")
+                # Daily planner requires an exact [day, day+1) acquisition.
+                if (start_day, end_day) != (selected_day, next_day):
+                    continue
+                rel = doc.get("file")
+                if not _raw_rel_ok(rel):
+                    raise ValueError("invalid selected FIRMS Raw path")
+                raw_key = prefix + "/" + rel
+                if raw_key not in raw_keys or raw_key in selected_raws:
+                    raise ValueError("missing or duplicate selected FIRMS Raw")
+                selected_manifests.append(key)
+                selected_raws.add(raw_key)
+            if not selected_manifests:
+                # No exact acquisition for the selected date. A successful
+                # preview will report PENDING; live mode may acquire that day.
+                return RestoreResult(0, 0, 0, 0, 0)
+            manifests = selected_manifests
+            raw_keys = selected_raws
+            objects = {key: objects[key] for key in manifests + sorted(raw_keys)}
+            total_bytes = sum(objects.values())
+            if total_bytes > max_bytes:
+                raise ValueError("selected FIRMS cloud byte budget exceeded")
 
         raw_checksums: dict[str, str] = {}
         for key in manifests:

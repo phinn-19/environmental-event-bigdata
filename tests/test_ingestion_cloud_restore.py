@@ -101,6 +101,8 @@ class CloudRestoreTests(unittest.TestCase):
             "file": raw,
             "bytes": len(content),
             "sha256": hashlib.sha256(content).hexdigest(),
+            "start_utc": "2024-11-05T00:00:00Z",
+            "end_utc": "2024-11-06T00:00:00Z",
         }
 
         other_raw = raw.replace("month=11", "month=12")
@@ -124,6 +126,85 @@ class CloudRestoreTests(unittest.TestCase):
         self.assertTrue((self.root / raw).is_file())
         self.assertTrue((self.root / manifest).is_file())
         self.assertFalse((self.root / other_raw).exists())
+
+    def test_scoped_firms_ignores_earlier_same_month_backfill(self):
+        base = "data/raw/nasa_firms/VIIRS_NOAA20_NRT/VN_BBOX/year=2026/month=10/"
+        mf_base = "data/raw/nasa_firms/manifests/VIIRS_NOAA20_NRT/VN_BBOX/year=2026/month=10/"
+        raw_old = base + "older.csv"
+        mf_old = mf_base + "older.manifest.json"
+        payload = b"older NRT acquisition"
+        doc = {
+            "schema_version": "manifest-v1", "status": "success",
+            "acquisition_mode": "backfill",
+            "file": raw_old, "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "start_utc": "2026-10-09T00:00:00Z",
+            "end_utc": "2026-10-14T00:00:00Z",
+        }
+        self.files = {
+            self.prefix + "/" + raw_old: payload,
+            self.prefix + "/" + mf_old: json.dumps(doc).encode(),
+        }
+        result = self.run_restore(scope_source="firms", scope_day="2026-10-23")
+        self.assertEqual(
+            (result.raw, result.manifests, result.created, result.bytes_verified),
+            (0, 0, 0, 0),
+        )
+        self.assertFalse((self.root / raw_old).exists())
+
+    def test_scoped_firms_only_restores_exact_day_and_checks_sha(self):
+        base = "data/raw/nasa_firms/VIIRS_NOAA20_NRT/VN_BBOX/year=2026/month=10/"
+        mf_base = "data/raw/nasa_firms/manifests/VIIRS_NOAA20_NRT/VN_BBOX/year=2026/month=10/"
+        old_raw, new_raw = base + "old.csv", base + "today.csv"
+        old_mf, new_mf = mf_base + "old.manifest.json", mf_base + "today.manifest.json"
+
+        def pair(raw, start, end, mode="live"):
+            body = b"some FIRMS rows for " + start.encode()
+            doc = {
+                "schema_version": "manifest-v1", "status": "success",
+                "acquisition_mode": mode, "file": raw,
+                "bytes": len(body), "sha256": hashlib.sha256(body).hexdigest(),
+                "start_utc": start, "end_utc": end,
+            }
+            return body, json.dumps(doc).encode()
+
+        old = pair(old_raw, "2026-10-09T00:00:00Z", "2026-10-14T00:00:00Z", "backfill")
+        today = pair(new_raw, "2026-10-23T00:00:00Z", "2026-10-24T00:00:00Z")
+        self.files = {
+            self.prefix + "/" + old_raw: old[0],
+            self.prefix + "/" + old_mf: old[1],
+            self.prefix + "/" + new_raw: today[0],
+            self.prefix + "/" + new_mf: today[1],
+        }
+        result = self.run_restore(scope_source="firms", scope_day="2026-10-23")
+        self.assertEqual((result.raw, result.manifests, result.created), (1, 1, 2))
+        self.assertTrue((self.root / new_raw).is_file())
+        self.assertFalse((self.root / old_raw).exists())
+        self.assertFalse((self.root / old_mf).exists())
+        # A corrupt selected Raw must never be committed to the local Raw path.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.root = Path(tmp)
+            self.files[self.prefix + "/" + new_raw] = b"X" + today[0][1:]
+            with self.assertRaisesRegex(ValueError, "SHA-256"):
+                self.run_restore(scope_source="firms", scope_day="2026-10-23")
+            self.assertFalse((self.root / new_raw).exists())
+
+    def test_scoped_firms_refuses_missing_window(self):
+        base = "data/raw/nasa_firms/VIIRS_NOAA20_NRT/VN_BBOX/year=2026/month=10/"
+        mf_base = "data/raw/nasa_firms/manifests/VIIRS_NOAA20_NRT/VN_BBOX/year=2026/month=10/"
+        raw = base + "unknown.csv"
+        payload = b"sample"
+        doc = {
+            "schema_version": "manifest-v1", "status": "success",
+            "acquisition_mode": "backfill", "file": raw,
+            "bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+        self.files = {
+            self.prefix + "/" + raw: payload,
+            self.prefix + "/" + mf_base + "unknown.manifest.json": json.dumps(doc).encode(),
+        }
+        with self.assertRaisesRegex(ValueError, "UTC window"):
+            self.run_restore(scope_source="firms", scope_day="2026-10-23")
 
     def test_scoped_firms_refuses_orphan_in_selected_month(self):
         raw = (
