@@ -60,7 +60,7 @@ jobs:
             echo 'CLOUD RESTORE: SKIPPED (read token not configured)'
             exit 0
           fi
-          python -m src.ingestion.cloud_restore --approve-download --max-bytes 8388608
+          python -m src.ingestion.cloud_restore --approve-download --max-bytes 8388608 --scope-source era5 --scope-day 2024-11-05
           result="$(python -m src.ingestion.daily_cloud_workflow \
             --source era5 --region HANOI --as-of 2024-11-06 \
             --lag-days 1 --lookback-days 1)"
