@@ -1,0 +1,73 @@
+name: FIRMS historical bulk (guarded, artifact only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      shard_index:
+        description: "Shard 0..12: 50-day blocks from 2023-03-01 through 2024-11-12"
+        required: true
+        default: "0"
+        type: string
+  schedule:
+    # 09:17 Vietnam time. A finite 13-day campaign beginning 2026-10-29 UTC.
+    - cron: '17 2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firms-historical-bulk
+  cancel-in-progress: false
+
+jobs:
+  historical-backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Determine fixed, non-overlapping date shard (offline)
+        id: plan
+        env:
+          SHARD_INDEX: ${{ inputs.shard_index }}
+        run: python scripts/bulk/firms_shard_plan.py
+      - name: Fetch at most 30 NASA FIRMS 5-day CSVs
+        if: steps.plan.outputs.active == 'true'
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+          START: ${{ steps.plan.outputs.start }}
+          END: ${{ steps.plan.outputs.end }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$FIRMS_MAP_KEY" ]; then
+            echo 'Missing FIRMS_MAP_KEY repository Actions secret' >&2
+            exit 1
+          fi
+          for source in VIIRS_SNPP_SP VIIRS_NOAA20_SP VIIRS_NOAA21_SP; do
+            python scripts/bulk/firms_vn_guarded.py fetch \
+              --start "$START" --end "$END" \
+              --sources "$source" \
+              --max-new-requests 10 --delay-seconds 2
+            sleep 3
+          done
+      - name: Strict file-by-file audit and self-contained export
+        if: steps.plan.outputs.active == 'true'
+        env:
+          START: ${{ steps.plan.outputs.start }}
+          END: ${{ steps.plan.outputs.end }}
+          SHARD: ${{ steps.plan.outputs.index }}
+        run: |
+          python scripts/bulk/firms_shard_export.py \
+            --start "$START" --end "$END" --shard "$SHARD"
+      - name: Save temporary artifact (NOT Hugging Face)
+        if: steps.plan.outputs.active == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firms-historical-shard-${{ steps.plan.outputs.index }}-${{ github.run_id }}
+          path: export/
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6
