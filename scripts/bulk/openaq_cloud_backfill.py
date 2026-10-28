@@ -2,7 +2,7 @@
 
 No source or cloud mutation in plan/preview. Live requires explicit approvals,
 provider-specific license approval, and existing repo source modules. No changes
-are made to any existing daily ingestion workflow. 
+are made to any existing daily ingestion workflow.
 """
 from __future__ import annotations
 
