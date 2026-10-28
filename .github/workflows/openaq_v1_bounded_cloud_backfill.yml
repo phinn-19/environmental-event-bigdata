@@ -1,0 +1,166 @@
+name: OpenAQ V1 guarded multi-day cloud backfill
+
+# Install same YAML on main (dispatch registration) and develop (execution).
+# Scheduling is OFF until BOTH repository variables are explicitly true.
+on:
+  workflow_dispatch:
+    inputs:
+      start_day:
+        description: 'UTC first day (e.g. 2026-07-01), 1..7 consecutive days'
+        type: string
+        required: true
+        default: '2026-07-01'
+      days:
+        description: '1..7 UTC days; 1 reviewed HANOI PM2.5 sensor'
+        type: choice
+        options: ['1', '3', '7']
+        required: true
+        default: '3'
+      mode:
+        description: 'Preview is read-only. Live requires license and two approvals.'
+        type: choice
+        options: ['preview', 'live']
+        required: true
+        default: 'preview'
+      approve_source_api:
+        type: boolean
+        required: true
+        default: false
+      approve_cloud_upload:
+        type: boolean
+        required: true
+        default: false
+  schedule:
+    # 10:41 Asia/Bangkok daily (03:41 UTC), first scheduled shard 2026-10-29.
+    - cron: '41 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  dispatcher:
+    if: >-
+      ${{ github.repository == 'phinn-19/environmental-event-bigdata' &&
+          github.ref == 'refs/heads/main' &&
+          (github.event_name == 'workflow_dispatch' ||
+           (github.event_name == 'schedule' &&
+            vars.INGESTION_OPENAQ_BULK_ENABLED == 'true' &&
+            vars.OPENAQ_REDISTRIBUTION_APPROVED == 'true')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    env:
+      START_DAY: ${{ inputs.start_day }}
+      DAYS: ${{ inputs.days }}
+      MODE: ${{ inputs.mode }}
+      APPROVE_API: ${{ inputs.approve_source_api }}
+      APPROVE_CLOUD: ${{ inputs.approve_cloud_upload }}
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const scheduled = context.eventName === 'schedule';
+            let start, days, mode, apiApproved, cloudApproved;
+            if (scheduled) {
+              const anchor = Date.UTC(2026, 9, 29);  // 29 October UTC
+              const shard = Math.floor((Date.now() - anchor) / 86400000);
+              if (shard < 0 || shard > 13) {
+                core.info('Finite campaign inactive; no request dispatched.');
+                return;
+              }
+              const first = new Date(Date.UTC(2026, 6, 1) + 7 * shard * 86400000);
+              start = first.toISOString().slice(0, 10);
+              days = '7';
+              mode = 'live';
+              apiApproved = 'true';
+              cloudApproved = 'true';
+            } else {
+              start = process.env.START_DAY;
+              days = process.env.DAYS;
+              mode = process.env.MODE;
+              apiApproved = process.env.APPROVE_API === 'true' ? 'true' : 'false';
+              cloudApproved = process.env.APPROVE_CLOUD === 'true' ? 'true' : 'false';
+            }
+            if (mode === 'live' && (apiApproved !== 'true' || cloudApproved !== 'true')) {
+              core.setFailed('Both manual approvals are required for live mode');
+              return;
+            }
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'openaq_v1_bounded_cloud_backfill.yml',
+              ref: 'develop',
+              inputs: {
+                start_day: start,
+                days,
+                mode,
+                approve_source_api: apiApproved,
+                approve_cloud_upload: cloudApproved,
+              },
+            });
+            core.info(`Dispatched ${mode} ${start} days=${days} on develop; verify downstream job.`);
+
+  acquire-verified-cloud:
+    if: >-
+      ${{ github.repository == 'phinn-19/environmental-event-bigdata' &&
+          github.ref == 'refs/heads/develop' &&
+          github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    concurrency:
+      group: environmental-event-cloud-tick-single-writer
+      cancel-in-progress: false
+    env:
+      START_DAY: ${{ inputs.start_day }}
+      DAYS: ${{ inputs.days }}
+      MODE: ${{ inputs.mode }}
+      APPROVE_API: ${{ inputs.approve_source_api }}
+      APPROVE_CLOUD: ${{ inputs.approve_cloud_upload }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3'
+      - name: Offline guard tests
+        run: |
+          python -m unittest discover -s tests -p 'test_guarded_openaq_cloud_backfill.py' -q
+          python -m unittest discover -s tests -p 'test_ingestion_daily_cloud_workflow.py' -q
+      - name: Offline scope preflight (zero API calls)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/bulk/openaq_cloud_backfill.py \
+            --start "$START_DAY" --days "$DAYS" --mode plan
+      - name: Read-only offline preview
+        if: ${{ inputs.mode == 'preview' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/bulk/openaq_cloud_backfill.py \
+            --start "$START_DAY" --days "$DAYS" --mode preview
+      - name: Approved licensed acquisition + audited HF publication
+        if: >-
+          ${{ inputs.mode == 'live' &&
+              inputs.approve_source_api == true &&
+              inputs.approve_cloud_upload == true }}
+        env:
+          OPENAQ_REDISTRIBUTION_APPROVED: ${{ vars.OPENAQ_REDISTRIBUTION_APPROVED }}
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          OPENAQ_API_KEY: ${{ secrets.OPENAQ_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/bulk/openaq_cloud_backfill.py \
+            --start "$START_DAY" --days "$DAYS" --mode live \
+            --approve-api --approve-cloud
+      - name: Reject unsupported mode or missing approvals
+        if: >-
+          ${{ inputs.mode == 'live' &&
+              (inputs.approve_source_api != true || inputs.approve_cloud_upload != true) }}
+        run: exit 1
