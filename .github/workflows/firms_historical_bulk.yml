@@ -1,4 +1,4 @@
-name: FIRMS historical bulk (guarded, artifact only)
+name: FIRMS historical bulk (guarded, HF + artifact)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ concurrency:
 jobs:
   historical-backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -71,3 +71,17 @@ jobs:
           retention-days: 90
           if-no-files-found: error
           compression-level: 6
+
+      - name: Publish audited historical CSV + audit to PRIVATE Hugging Face bulk/v1
+        if: steps.plan.outputs.active == 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${HF_TOKEN:-}" ]; then
+            echo 'Missing HF_WRITE_TOKEN' >&2
+            exit 1
+          fi
+          python -m pip install 'huggingface_hub>=1.16,<3'
+          python scripts/bulk/firms_historical_hf_publish.py --export export --approve-upload

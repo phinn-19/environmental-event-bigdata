@@ -1,0 +1,92 @@
+name: ERA5 VN_BBOX 3-day verified HF cloud bulk
+
+on:
+  schedule:
+    # 12:19 Vietnam time. Campaign starts 2026-10-30 UTC.
+    - cron: '19 5 * * *'
+  workflow_dispatch:
+    inputs:
+      start_day:
+        description: 'Optional UTC first day YYYY-MM-DD. Blank uses scheduled campaign position.'
+        type: string
+        required: false
+        default: ''
+      days:
+        description: 'Maximum ERA5 one-day requests per run'
+        type: choice
+        required: true
+        options: ['1', '3']
+        default: '3'
+      mode:
+        description: 'Preview never calls providers or HF'
+        type: choice
+        options: ['preview', 'live']
+        required: true
+        default: 'preview'
+      approve_source_api:
+        type: boolean
+        required: true
+        default: false
+      approve_cloud_upload:
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  era5-three-day:
+    if: ${{ github.repository == 'phinn-19/environmental-event-bigdata' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    concurrency:
+      group: environmental-event-cloud-tick-single-writer
+      cancel-in-progress: false
+    steps:
+      - name: Checkout reviewed develop ingestion engine
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install vetted ingestion dependencies
+        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3' 'cdsapi>=0.7,<1' 'eccodes>=2,<3'
+      - name: Offline ERA5 batch tests
+        run: |
+          python -m unittest discover -s tests -p 'test_guarded_era5_cloud_batch.py' -q
+          python -m unittest discover -s tests -p 'test_ingestion_daily_cloud_workflow.py' -q
+      - name: Offline preflight (no provider calls)
+        env:
+          START_DAY: ${{ inputs.start_day }}
+          DAYS: ${{ inputs.days }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          argv=(--mode preview --days "${DAYS:-3}")
+          if [[ -n "${START_DAY:-}" ]]; then argv+=(--start "$START_DAY"); fi
+          python scripts/bulk/era5_cloud_batch.py "${argv[@]}"
+      - name: Approved per-day GRIB acquisition + private HF verified upload
+        if: >-
+          ${{ github.event_name == 'schedule' ||
+              (inputs.mode == 'live' && inputs.approve_source_api == true && inputs.approve_cloud_upload == true) }}
+        env:
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
+          START_DAY: ${{ inputs.start_day }}
+          DAYS: ${{ inputs.days }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          argv=(--mode live --approve-api --approve-cloud --days "${DAYS:-3}")
+          if [[ -n "${START_DAY:-}" ]]; then argv+=(--start "$START_DAY"); fi
+          python scripts/bulk/era5_cloud_batch.py "${argv[@]}"
+      - name: Fail closed on unapproved manual live
+        if: >-
+          ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live' &&
+              (inputs.approve_source_api != true || inputs.approve_cloud_upload != true) }}
+        run: exit 1

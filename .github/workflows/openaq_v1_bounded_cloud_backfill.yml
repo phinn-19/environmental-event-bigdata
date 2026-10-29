@@ -31,7 +31,7 @@ on:
         required: true
         default: false
   schedule:
-    # 10:41 Asia/Bangkok daily (03:41 UTC), first scheduled shard 2026-10-29.
+    # 10:41 Asia/Bangkok daily (03:41 UTC), first scheduled shard 2026-10-30.
     - cron: '41 3 * * *'
 
 permissions:
@@ -64,7 +64,7 @@ jobs:
             const scheduled = context.eventName === 'schedule';
             let start, days, mode, apiApproved, cloudApproved;
             if (scheduled) {
-              const anchor = Date.UTC(2026, 9, 29);  // 29 October UTC
+              const anchor = Date.UTC(2026, 9, 30);  // 29 October UTC
               const shard = Math.floor((Date.now() - anchor) / 86400000);
               if (shard < 0 || shard > 13) {
                 core.info('Finite campaign inactive; no request dispatched.');
