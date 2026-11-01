@@ -1,92 +1,142 @@
-name: ERA5 VN_BBOX 3-day verified HF cloud bulk
+name: ERA5 VN_BBOX monthly backfill - guarded HF private
 
+# Replaces the old 3 x 1-day automatic acquisition workflow.
+# This schedule is OFF by default until explicitly enabled via GitHub Variables.
 on:
   schedule:
-    # 12:19 Vietnam time. Campaign starts 2026-10-30 UTC.
-    - cron: '19 5 * * *'
+    - cron: '19 5,11,17,23 * * *'
   workflow_dispatch:
     inputs:
-      start_day:
-        description: 'Optional UTC first day YYYY-MM-DD. Blank uses scheduled campaign position.'
-        type: string
-        required: false
-        default: ''
-      days:
-        description: 'Maximum ERA5 one-day requests per run'
-        type: choice
-        required: true
-        options: ['1', '3']
-        default: '3'
       mode:
-        description: 'Preview never calls providers or HF'
+        description: 'plan=offline; live=one monthly job progress/submit; adopt=bind CDS ID'
         type: choice
-        options: ['preview', 'live']
         required: true
-        default: 'preview'
+        default: plan
+        options: [plan, live, adopt]
+      submit_new:
+        description: 'Allow at most ONE new MONTHLY CDS request when no job is pending'
+        type: boolean
+        required: true
+        default: false
       approve_source_api:
+        description: 'Approve CDS API access for manual live/adopt'
         type: boolean
         required: true
         default: false
       approve_cloud_upload:
+        description: 'Approve private HF state and verified GRIB upload'
         type: boolean
         required: true
         default: false
+      reviewed_cds_request_history:
+        description: 'I checked CDS Your Requests for untracked/duplicate monthly jobs'
+        type: boolean
+        required: true
+        default: false
+      adopt_month:
+        description: 'For adopt only: existing month YYYY-MM'
+        type: string
+        required: false
+      adopt_request_id:
+        description: 'For adopt only: existing CDS request ID'
+        type: string
+        required: false
 
 permissions:
   contents: read
 
+# Serialize against the other cloud ingestion workflows that use this group.
+concurrency:
+  group: environmental-event-cloud-tick-single-writer
+  cancel-in-progress: false
+
 jobs:
-  era5-three-day:
-    if: ${{ github.repository == 'phinn-19/environmental-event-bigdata' && github.ref == 'refs/heads/main' }}
+  monthly:
+    if: >-
+      ${{ github.repository == 'phinn-19/environmental-event-bigdata' &&
+          (github.event_name == 'workflow_dispatch' ||
+           vars.ERA5_MONTHLY_ENABLED == 'true') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    concurrency:
-      group: environmental-event-cloud-tick-single-writer
-      cancel-in-progress: false
+    timeout-minutes: 110
     steps:
-      - name: Checkout reviewed develop ingestion engine
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: develop
           persist-credentials: false
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install vetted ingestion dependencies
-        run: python -m pip install 'PyYAML>=6,<7' 'huggingface_hub>=1.16,<3' 'cdsapi>=0.7,<1' 'eccodes>=2,<3'
-      - name: Offline ERA5 batch tests
-        run: |
-          python -m unittest discover -s tests -p 'test_guarded_era5_cloud_batch.py' -q
-          python -m unittest discover -s tests -p 'test_ingestion_daily_cloud_workflow.py' -q
-      - name: Offline preflight (no provider calls)
-        env:
-          START_DAY: ${{ inputs.start_day }}
-          DAYS: ${{ inputs.days }}
+      - name: Validate monthly runner locally
         shell: bash
         run: |
           set -euo pipefail
-          argv=(--mode preview --days "${DAYS:-3}")
-          if [[ -n "${START_DAY:-}" ]]; then argv+=(--start "$START_DAY"); fi
-          python scripts/bulk/era5_cloud_batch.py "${argv[@]}"
-      - name: Approved per-day GRIB acquisition + private HF verified upload
-        if: >-
-          ${{ github.event_name == 'schedule' ||
-              (inputs.mode == 'live' && inputs.approve_source_api == true && inputs.approve_cloud_upload == true) }}
+          python -m py_compile scripts/bulk/era5_monthly_bulk_staging.py scripts/bulk/era5_monthly_cloud_queue.py
+          python -m unittest discover -s tests -p 'test_era5_monthly_cloud_queue.py' -v
+      - name: Offline preview (no API credentials used)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'plan' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/bulk/era5_monthly_cloud_queue.py plan --from-month 2021-01 --to-month 2023-11
+      - name: Install private-cloud and CDS dependencies
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'plan') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install 'huggingface_hub>=1.16,<3' 'ecmwf-datastores-client>=0.4,<1' 'eccodes>=2,<3'
+      - name: Progress existing job or at most one new monthly job
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'live') }}
+        shell: bash
         env:
           HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
           HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
           CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
-          START_DAY: ${{ inputs.start_day }}
-          DAYS: ${{ inputs.days }}
-        shell: bash
+          IS_SCHEDULE: ${{ github.event_name == 'schedule' }}
+          AUTO_SUBMIT: ${{ vars.ERA5_MONTHLY_AUTO_SUBMIT }}
+          CDS_RECONCILED: ${{ vars.ERA5_MONTHLY_CDS_RECONCILED }}
+          MANUAL_APPROVE_API: ${{ inputs.approve_source_api }}
+          MANUAL_APPROVE_CLOUD: ${{ inputs.approve_cloud_upload }}
+          MANUAL_SUBMIT: ${{ inputs.submit_new }}
+          MANUAL_RECONCILED: ${{ inputs.reviewed_cds_request_history }}
         run: |
           set -euo pipefail
-          argv=(--mode live --approve-api --approve-cloud --days "${DAYS:-3}")
-          if [[ -n "${START_DAY:-}" ]]; then argv+=(--start "$START_DAY"); fi
-          python scripts/bulk/era5_cloud_batch.py "${argv[@]}"
-      - name: Fail closed on unapproved manual live
-        if: >-
-          ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'live' &&
-              (inputs.approve_source_api != true || inputs.approve_cloud_upload != true) }}
-        run: exit 1
+          args=(tick --from-month 2021-01 --to-month 2023-11)
+          if [[ "$IS_SCHEDULE" == 'true' ]]; then
+            args+=(--approve-cloud)
+            if [[ "$AUTO_SUBMIT" == 'true' && "$CDS_RECONCILED" == 'true' ]]; then
+              args+=(--allow-new-submission --approve-api --reviewed-cds-request-history)
+            fi
+          else
+            if [[ "$MANUAL_APPROVE_CLOUD" != 'true' || "$MANUAL_APPROVE_API" != 'true' ]]; then
+              echo 'STOP: manual live needs BOTH cloud and API approvals'
+              exit 1
+            fi
+            args+=(--approve-cloud --approve-api)
+            if [[ "$MANUAL_SUBMIT" == 'true' ]]; then
+              if [[ "$MANUAL_RECONCILED" != 'true' ]]; then
+                echo 'STOP: submit_new needs reviewed CDS request history'
+                exit 1
+              fi
+              args+=(--allow-new-submission --reviewed-cds-request-history)
+            fi
+          fi
+          python scripts/bulk/era5_monthly_cloud_queue.py "${args[@]}"
+      - name: Adopt existing CDS request (no new submission)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'adopt' }}
+        shell: bash
+        env:
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          HF_WRITE_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
+          APPROVE_API: ${{ inputs.approve_source_api }}
+          APPROVE_CLOUD: ${{ inputs.approve_cloud_upload }}
+          ADOPT_MONTH: ${{ inputs.adopt_month }}
+          ADOPT_REQUEST_ID: ${{ inputs.adopt_request_id }}
+        run: |
+          set -euo pipefail
+          if [[ "$APPROVE_API" != 'true' || "$APPROVE_CLOUD" != 'true' ]]; then
+            echo 'STOP: adopt requires explicit API and cloud approvals'
+            exit 1
+          fi
+          python scripts/bulk/era5_monthly_cloud_queue.py adopt \
+            --from-month 2021-01 --to-month 2023-11 \
+            --approve-cloud --month "$ADOPT_MONTH" --request-id "$ADOPT_REQUEST_ID"
