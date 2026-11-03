@@ -1,0 +1,85 @@
+name: ERA5 canonical lake promote - GUARDED
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'plan=offline; check=HF READ ONLY; promote=WRITE after review'
+        required: true
+        type: choice
+        options: [plan, check, promote]
+        default: check
+      approve_hf_read:
+        description: 'Approve read-only private HF data access'
+        required: true
+        type: boolean
+        default: false
+      approve_hf_write:
+        description: 'PROMOTE ONLY: approve canonical HF writes (~64 MB)'
+        required: true
+        type: boolean
+        default: false
+      reviewed_manifest_contract:
+        description: 'PROMOTE ONLY: group reviewed manifest-v1 semantics and retrieval timestamp proxy'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: era5-canonical-promote-guarded
+  cancel-in-progress: false
+
+jobs:
+  guarded:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+      HF_WRITE_TOKEN: ${{ inputs.mode == 'promote' && secrets.HF_WRITE_TOKEN || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate mode and explicit approvals
+        env:
+          MODE: ${{ inputs.mode }}
+          READ_APPROVED: ${{ inputs.approve_hf_read }}
+          WRITE_APPROVED: ${{ inputs.approve_hf_write }}
+          CONTRACT_APPROVED: ${{ inputs.reviewed_manifest_contract }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" != plan ] && [ "$READ_APPROVED" != true ]; then exit 2; fi
+          if [ "$MODE" = promote ] && { [ "$WRITE_APPROVED" != true ] || [ "$CONTRACT_APPROVED" != true ]; }; then exit 2; fi
+      - name: Install dependencies
+        run: |
+          python -m pip install 'huggingface_hub>=2.4.0,<3' 'jsonschema>=4.20,<5'
+      - name: Offline unit tests
+        run: |
+          python -m unittest discover -s tests -p 'test_era5_canonical_promote_guarded.py' -v
+      - name: Guarded canonical plan, check or promote
+        env:
+          MODE: ${{ inputs.mode }}
+          READ_APPROVED: ${{ inputs.approve_hf_read }}
+          WRITE_APPROVED: ${{ inputs.approve_hf_write }}
+          CONTRACT_APPROVED: ${{ inputs.reviewed_manifest_contract }}
+        run: |
+          set -euo pipefail
+          args=("$MODE" --report era5_canonical_promote_report.json)
+          if [ "$READ_APPROVED" = true ]; then args+=(--approve-hf-read); fi
+          if [ "$WRITE_APPROVED" = true ]; then args+=(--approve-hf-write); fi
+          if [ "$CONTRACT_APPROVED" = true ]; then args+=(--reviewed-manifest-contract); fi
+          # Offline plan mode does not write the report; uploads are only for review.
+          if [ "$MODE" = plan ]; then args=(plan); fi
+          python scripts/bulk/era5_canonical_promote_guarded.py "${args[@]}"
+      - name: Save JSON review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: era5-canonical-promote-review
+          path: era5_canonical_promote_report.json
+          if-no-files-found: ignore
+          retention-days: 7
