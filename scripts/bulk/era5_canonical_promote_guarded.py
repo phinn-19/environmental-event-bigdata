@@ -102,12 +102,21 @@ def build_manifest(month: str, state: dict, stage_manifest: dict, raw_path: Path
     return manifest
 
 
-def validate_manifest(doc: dict, schema: dict) -> None:
+def validate_manifest(doc: dict, schema: dict, *, target_region: bool = True) -> None:
+    """Validate manifest-v1; only proposed targets must use VN_BBOX.
+
+    Existing ERA5 canonical manifests may legitimately be for HANOI or other
+    regions. They must stay valid and retain their existing paths/provenance.
+    Overlap checks still compare only the same VN_BBOX region as before.
+    """
     from jsonschema import Draft202012Validator, FormatChecker
     Draft202012Validator(schema, format_checker=FormatChecker()).validate(doc)
     require(doc.get('source') == 'era5' and doc.get('source_product') == CANONICAL_PRODUCT,
             'unexpected canonical source')
-    require(doc.get('region_id') == 'VN_BBOX', 'unexpected region')
+    require(isinstance(doc.get('region_id'), str) and bool(doc['region_id'].strip()),
+            'invalid region')
+    if target_region:
+        require(doc['region_id'] == 'VN_BBOX', 'unexpected target region')
     require(doc.get('status') == 'success', 'canonical manifest not successful')
     require(_safe_relative(doc.get('file')), 'unsafe raw path')
     require(type(doc.get('bytes')) is int and doc['bytes'] > 0, 'bad raw size')
@@ -261,7 +270,7 @@ def run_remote(*, mode: str, months: tuple[str, ...], bucket: str,
             _download(download, bucket, read_token, node.path, p)
             require(p.stat().st_size == node.size, 'canonical manifest size mismatch')
             doc = json.loads(p.read_text(encoding='utf-8'))
-            validate_manifest(doc, schema)
+            validate_manifest(doc, schema, target_region=False)
             require('lake/v1/' + doc['file'] in canonical_keys,
                     'canonical manifest missing referenced raw')
             docs[node.path] = doc
