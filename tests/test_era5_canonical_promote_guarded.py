@@ -186,6 +186,34 @@ class PromoteTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'differs'):
             b.run(mode='check')
 
+    def test_existing_hanoi_manifest_is_allowed_but_target_remains_vn_bbox(self):
+        """Regression: existing HANOI manifest must not block VN_BBOX pilot."""
+        b = FakeBucket()
+        b.run(mode='promote')
+        raw, mf = mod.canonical_paths('2023-08')
+        old_raw, old_mf = 'lake/v1/' + raw, 'lake/v1/' + mf
+        doc = json.loads(b.objects.pop(old_mf))
+        raw_data = b.objects.pop(old_raw)
+
+        # Same dates but different region: distinct region scope, as in the
+        # canonical preflight. Existing canonical is still fully schema-valid.
+        doc['region_id'] = 'HANOI'
+        doc['file'] = ('data/raw/era5/reanalysis-era5-single-levels/'
+                       'HANOI/year=2023/month=08/day=01/existing.grib')
+        hanoi_manifest = ('lake/v1/data/raw/era5/manifests/'
+                          'reanalysis-era5-single-levels/HANOI/year=2023/'
+                          'month=08/day=01/existing.manifest.json')
+        b.objects['lake/v1/' + doc['file']] = raw_data
+        b.objects[hanoi_manifest] = json.dumps(doc).encode()
+
+        previous = len(b.upload_calls)
+        out = b.run(mode='check')
+        self.assertEqual(len(b.upload_calls), previous)
+        self.assertEqual(out['canonical_checked_manifests'], 1)
+        self.assertEqual(out['actions'][0]['status'], 'NEW_RAW_AND_MANIFEST')
+        with self.assertRaisesRegex(ValueError, 'unexpected target region'):
+            mod.validate_manifest(doc, SCHEMA)
+
     def test_private_guard_and_no_write_token(self):
         b = FakeBucket()
         b.private = False
