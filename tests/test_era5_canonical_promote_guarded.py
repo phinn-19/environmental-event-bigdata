@@ -117,6 +117,41 @@ class PromoteTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mod.parse_months('2023-08,2023-08')
 
+    def test_single_historical_month_is_allowed_but_other_bulk_is_refused(self):
+        self.assertEqual(mod.parse_months('2023-07'), ('2023-07',))
+        self.assertEqual(mod.parse_months('2021-01'), ('2021-01',))
+        self.assertEqual(mod.parse_months(','.join(upstream.MONTHS)), upstream.MONTHS)
+        with self.assertRaises(ValueError):
+            mod.parse_months('2023-06,2023-07')
+        with self.assertRaises(ValueError):
+            mod.parse_months('2024-02')  # already audited locally
+        with self.assertRaises(ValueError):
+            mod.parse_months('2023-12')  # historical queue deliberately excludes it
+        with self.assertRaises(ValueError):
+            mod.parse_months('2020-12')
+        with self.assertRaises(ValueError):
+            mod.parse_months('2023-07,')
+
+    def test_july_2023_single_month_check_promote_and_idempotence(self):
+        b = FakeBucket(months=('2023-07',))
+        checked = b.run(mode='check', months=('2023-07',))
+        self.assertEqual(checked['source_bytes_verified'], len(b'FAKE-GRIB-2023-07'))
+        self.assertEqual(checked['actions'][0]['status'], 'NEW_RAW_AND_MANIFEST')
+        self.assertEqual(b.upload_calls, [])
+        promoted = b.run(mode='promote', months=('2023-07',))
+        self.assertEqual(promoted['hf_writes'], 2)
+        self.assertEqual(b.run(mode='check', months=('2023-07',))['actions'][0]['status'],
+                         'ALREADY_PRESENT')
+        self.assertEqual(b.run(mode='promote', months=('2023-07',))['hf_writes'], 0)
+        self.assertEqual(len(b.upload_calls), 2)
+
+    def test_july_missing_state_fails_closed(self):
+        b = FakeBucket(months=('2023-07',))
+        del b.objects[upstream.key_for('2023-07', 'state')]
+        with self.assertRaisesRegex(ValueError, 'missing staged'):
+            b.run(mode='check', months=('2023-07',))
+        self.assertFalse(b.upload_calls)
+
     def test_manifest_v1_and_month_bounds(self):
         state, source = fake_state_and_manifest('2023-08', b'dummy')
         with tempfile.TemporaryDirectory() as t:

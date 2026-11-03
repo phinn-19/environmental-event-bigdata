@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ERA5 2023-08..11 HF staging -> private canonical lake/v1, guarded.
+"""ERA5 monthly HF staging -> private canonical lake/v1, guarded.
 
 Modes:
   plan    zero network; list deterministic target structure
@@ -36,7 +36,7 @@ from era5_canonical_preflight import (
 CANONICAL_PRODUCT = 'reanalysis-era5-single-levels'
 MAX_TOTAL_RAW = 100 * 1024 * 1024
 MAX_BUCKET = 20 * 1024 * 1024 * 1024  # safety cap, not provider quota
-MONTH_RE = re.compile(r'^2023-(08|09|10|11)$')
+MONTH_RE = re.compile(r'^(?:2021|2022|2023)-(?:0[1-9]|1[0-2])$')
 SHA_RE = re.compile(r'^[a-f0-9]{64}$')
 
 
@@ -45,15 +45,27 @@ def require(ok: bool, reason: str) -> None:
         raise ValueError(reason)
 
 
+def approved_month(month: str) -> bool:
+    """Months are limited to the historical queue range, not audited local ERA5."""
+    return (bool(MONTH_RE.fullmatch(month)) and
+            '2021-01' <= month <= '2023-11')
+
+
 def parse_months(raw: str) -> tuple[str, ...]:
-    months = tuple(x.strip() for x in raw.split(',') if x.strip())
-    require(bool(months) and len(set(months)) == len(months), 'empty or duplicate months')
-    require(all(m in MONTHS and MONTH_RE.fullmatch(m) for m in months), 'month out of approved pilot')
+    months = tuple(x.strip() for x in raw.split(','))
+    require(bool(months) and all(months) and len(set(months)) == len(months),
+            'empty or duplicate months')
+    require(all(approved_month(m) for m in months),
+            'month outside approved historical cloud range')
+    # Preserve the four-month verified pilot for existing workflows. For other
+    # months only one month per invocation is allowed, to cap blast radius.
+    require(len(months) == 1 or months == MONTHS,
+            'only a single new month (or the original 4-month pilot) is allowed')
     return months
 
 
 def canonical_paths(month: str) -> tuple[str, str]:
-    require(month in MONTHS, 'month out of scope')
+    require(approved_month(month), 'month out of scope')
     request_hash = expected_request_sha(month)[:20]
     y, mo = month.split('-')
     suffix = f'{CANONICAL_PRODUCT}/VN_BBOX/year={y}/month={mo}/live-monthly-{request_hash}'

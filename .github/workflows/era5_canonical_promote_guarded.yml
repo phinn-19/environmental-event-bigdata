@@ -9,6 +9,11 @@ on:
         type: choice
         options: [plan, check, promote]
         default: check
+      months:
+        description: 'One historical month YYYY-MM (e.g. 2023-07); pilot 2023-08..11 also allowed'
+        required: true
+        type: string
+        default: '2023-08,2023-09,2023-10,2023-11'
       approve_hf_read:
         description: 'Approve read-only private HF data access'
         required: true
@@ -47,6 +52,7 @@ jobs:
       - name: Validate mode and explicit approvals
         env:
           MODE: ${{ inputs.mode }}
+          MONTHS: ${{ inputs.months }}
           READ_APPROVED: ${{ inputs.approve_hf_read }}
           WRITE_APPROVED: ${{ inputs.approve_hf_write }}
           CONTRACT_APPROVED: ${{ inputs.reviewed_manifest_contract }}
@@ -63,17 +69,18 @@ jobs:
       - name: Guarded canonical plan, check or promote
         env:
           MODE: ${{ inputs.mode }}
+          MONTHS: ${{ inputs.months }}
           READ_APPROVED: ${{ inputs.approve_hf_read }}
           WRITE_APPROVED: ${{ inputs.approve_hf_write }}
           CONTRACT_APPROVED: ${{ inputs.reviewed_manifest_contract }}
         run: |
           set -euo pipefail
-          args=("$MODE" --report era5_canonical_promote_report.json)
+          args=("$MODE" --months "$MONTHS" --report era5_canonical_promote_report.json)
           if [ "$READ_APPROVED" = true ]; then args+=(--approve-hf-read); fi
           if [ "$WRITE_APPROVED" = true ]; then args+=(--approve-hf-write); fi
           if [ "$CONTRACT_APPROVED" = true ]; then args+=(--reviewed-manifest-contract); fi
           # Offline plan mode does not write the report; uploads are only for review.
-          if [ "$MODE" = plan ]; then args=(plan); fi
+          if [ "$MODE" = plan ]; then args=(plan --months "$MONTHS"); fi
           python scripts/bulk/era5_canonical_promote_guarded.py "${args[@]}"
       - name: Save JSON review report
         if: always()
