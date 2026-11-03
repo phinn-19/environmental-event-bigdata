@@ -1,0 +1,51 @@
+name: ERA5 canonical lake overlap preflight - READ ONLY
+on:
+  workflow_dispatch:
+    inputs:
+      approve_hf_read:
+        description: 'Read existing ERA5 canonical manifest metadata in private HF; ZERO writes'
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: era5-canonical-readonly-preflight
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: ${{ github.repository == 'phinn-19/environmental-event-bigdata' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline tests and plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_era5_canonical_preflight.py -v
+          python scripts/bulk/era5_canonical_preflight.py plan
+      - name: Check read approval
+        if: ${{ inputs.approve_hf_read != true }}
+        run: exit 1
+      - name: Read-only canonical inventory and overlap guard
+        if: ${{ inputs.approve_hf_read == true }}
+        env:
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m pip install 'huggingface_hub>=1.16,<3'
+          python scripts/bulk/era5_canonical_preflight.py check \
+            --approve-hf-read --report canonical_era5_preflight.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && inputs.approve_hf_read == true }}
+        with:
+          name: era5-canonical-preflight-report
+          path: canonical_era5_preflight.json
+          if-no-files-found: ignore
+          retention-days: 7
