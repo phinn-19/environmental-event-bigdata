@@ -259,5 +259,107 @@ class PromoteTests(unittest.TestCase):
             b.run(mode='promote', write_token='')
 
 
+class AutoGuardTests(unittest.TestCase):
+    def choose(self, b):
+        return mod.find_next_unpromoted_pass(
+            bucket=mod.BUCKET, read_token='read', get_info=b.info,
+            list_tree=b.tree, download=b.download)
+
+    def tick(self, b, mode='auto-check'):
+        return mod.auto_tick(
+            mode=mode, bucket=mod.BUCKET, read_token='read',
+            write_token='write' if mode == 'auto-promote' else '',
+            schema=SCHEMA, get_info=b.info, list_tree=b.tree,
+            download=b.download,
+            upload=b.upload if mode == 'auto-promote' else None)
+
+    def test_auto_selects_newest_verified_unpromoted_month(self):
+        b = FakeBucket(months=('2023-07', '2023-08'))
+        self.assertEqual(self.choose(b), '2023-08')
+        b.run(mode='promote', months=('2023-08',))
+        self.assertEqual(self.choose(b), '2023-07')
+
+    def test_auto_check_never_uploads(self):
+        b = FakeBucket(months=('2023-07',))
+        out = self.tick(b)
+        self.assertEqual(out['auto_selected_month'], '2023-07')
+        self.assertEqual(out['actions'][0]['status'], 'NEW_RAW_AND_MANIFEST')
+        self.assertEqual(out['hf_writes'], 0)
+        self.assertEqual(b.upload_calls, [])
+
+    def test_auto_promote_one_at_a_time_then_idle(self):
+        b = FakeBucket(months=('2023-07', '2023-08'))
+        self.assertEqual(self.tick(b, 'auto-promote')['auto_selected_month'], '2023-08')
+        self.assertEqual(len(b.upload_calls), 2)
+        self.assertEqual(self.tick(b, 'auto-promote')['auto_selected_month'], '2023-07')
+        self.assertEqual(len(b.upload_calls), 4)
+        self.assertEqual(self.tick(b)['status'], 'IDLE')
+        self.assertEqual(self.tick(b, 'auto-promote')['hf_writes'], 0)
+        self.assertEqual(len(b.upload_calls), 4)
+
+    def test_auto_skips_inflight_queue_state(self):
+        b = FakeBucket(months=('2023-07', '2023-08'))
+        key = upstream.key_for('2023-08', 'state')
+        state = json.loads(b.objects[key])
+        state['status'] = 'SUBMITTED'
+        state['audit_status'] = None
+        b.objects[key] = json.dumps(state).encode()
+        self.assertEqual(self.choose(b), '2023-07')
+
+    def test_auto_refuses_pass_without_audit(self):
+        b = FakeBucket(months=('2023-07',))
+        key = upstream.key_for('2023-07', 'state')
+        state = json.loads(b.objects[key])
+        state['audit_status'] = 'MISSING'
+        b.objects[key] = json.dumps(state).encode()
+        with self.assertRaisesRegex(ValueError, 'PASS without audit'):
+            self.choose(b)
+
+    def test_auto_refuses_incomplete_pass_objects(self):
+        b = FakeBucket(months=('2023-07',))
+        del b.objects[upstream.key_for('2023-07', 'raw')]
+        with self.assertRaisesRegex(ValueError, 'complete verified objects'):
+            self.choose(b)
+
+    def test_auto_recovers_raw_only_after_interrupted_publish(self):
+        b = FakeBucket(months=('2023-07',))
+        raw, _ = mod.canonical_paths('2023-07')
+        b.objects['lake/v1/' + raw] = b.objects[upstream.key_for('2023-07','raw')]
+        self.assertEqual(self.tick(b, 'auto-check')['actions'][0]['status'], 'RESUME_MANIFEST')
+        self.assertEqual(self.tick(b, 'auto-promote')['hf_writes'], 1)
+        self.assertEqual(self.tick(b)['status'], 'IDLE')
+
+    def test_auto_refuses_orphan_manifest(self):
+        b = FakeBucket(months=('2023-07',))
+        _, mf = mod.canonical_paths('2023-07')
+        b.objects['lake/v1/' + mf] = b'{}'
+        with self.assertRaisesRegex(ValueError, 'manifest without Raw'):
+            self.choose(b)
+
+    def test_auto_workflow_opt_in_guards_are_present(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github' / 'workflows' /
+                    'era5_canonical_promote_guarded.yml').read_text(encoding='utf-8')
+        self.assertIn("vars.ERA5_CANONICAL_AUTO_ENABLED == 'true'", workflow)
+        self.assertIn("vars.ERA5_CANONICAL_AUTO_WRITE == 'true'", workflow)
+        self.assertIn("vars.ERA5_CANONICAL_CONTRACT_REVIEWED == 'true'", workflow)
+        self.assertIn('options: [plan, check, promote, auto-check]', workflow)
+        self.assertIn("group: era5-canonical-promote-guarded", workflow)
+        self.assertIn('if { [ "$MODE" = promote ] || [ "$MODE" = auto-promote ]; }', workflow)
+        self.assertIn('if [[ "$MODE" != auto-* ]]', workflow)
+
+    def test_auto_denies_nonprivate_bucket_and_unapproved_write(self):
+        b = FakeBucket(months=('2023-07',))
+        b.private = False
+        with self.assertRaisesRegex(ValueError, 'PRIVATE'):
+            self.choose(b)
+        b.private = True
+        with self.assertRaisesRegex(ValueError, 'not explicitly authorized'):
+            mod.auto_tick(mode='auto-promote', bucket=mod.BUCKET,
+                          read_token='read', write_token='', schema=SCHEMA,
+                          get_info=b.info, list_tree=b.tree,
+                          download=b.download, upload=None)
+        self.assertEqual(b.upload_calls, [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,13 +1,16 @@
 name: ERA5 canonical lake promote - GUARDED
 
 on:
+  # Automatic promotion is OFF until repository Variables explicitly opt in.
+  schedule:
+    - cron: '43 5,11,17,23 * * *'
   workflow_dispatch:
     inputs:
       mode:
         description: 'plan=offline; check=HF READ ONLY; promote=WRITE after review'
         required: true
         type: choice
-        options: [plan, check, promote]
+        options: [plan, check, promote, auto-check]
         default: check
       months:
         description: 'One historical month YYYY-MM (e.g. 2023-07); pilot 2023-08..11 also allowed'
@@ -39,11 +42,12 @@ concurrency:
 
 jobs:
   guarded:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ERA5_CANONICAL_AUTO_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
-      HF_WRITE_TOKEN: ${{ inputs.mode == 'promote' && secrets.HF_WRITE_TOKEN || '' }}
+      HF_WRITE_TOKEN: ${{ ((github.event_name == 'schedule' && vars.ERA5_CANONICAL_AUTO_WRITE == 'true') || inputs.mode == 'promote') && secrets.HF_WRITE_TOKEN || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -51,15 +55,15 @@ jobs:
           python-version: '3.12'
       - name: Validate mode and explicit approvals
         env:
-          MODE: ${{ inputs.mode }}
+          MODE: ${{ github.event_name == 'schedule' && (vars.ERA5_CANONICAL_AUTO_WRITE == 'true' && 'auto-promote' || 'auto-check') || inputs.mode }}
           MONTHS: ${{ inputs.months }}
-          READ_APPROVED: ${{ inputs.approve_hf_read }}
-          WRITE_APPROVED: ${{ inputs.approve_hf_write }}
-          CONTRACT_APPROVED: ${{ inputs.reviewed_manifest_contract }}
+          READ_APPROVED: ${{ github.event_name == 'schedule' && 'true' || inputs.approve_hf_read }}
+          WRITE_APPROVED: ${{ github.event_name == 'schedule' && (vars.ERA5_CANONICAL_AUTO_WRITE == 'true' && 'true' || 'false') || inputs.approve_hf_write }}
+          CONTRACT_APPROVED: ${{ github.event_name == 'schedule' && (vars.ERA5_CANONICAL_CONTRACT_REVIEWED == 'true' && 'true' || 'false') || inputs.reviewed_manifest_contract }}
         run: |
           set -euo pipefail
           if [ "$MODE" != plan ] && [ "$READ_APPROVED" != true ]; then exit 2; fi
-          if [ "$MODE" = promote ] && { [ "$WRITE_APPROVED" != true ] || [ "$CONTRACT_APPROVED" != true ]; }; then exit 2; fi
+          if { [ "$MODE" = promote ] || [ "$MODE" = auto-promote ]; } && { [ "$WRITE_APPROVED" != true ] || [ "$CONTRACT_APPROVED" != true ]; }; then exit 2; fi
       - name: Install dependencies
         run: |
           python -m pip install 'huggingface_hub>=2.4.0,<3' 'jsonschema>=4.20,<5'
@@ -68,17 +72,21 @@ jobs:
           python -m unittest discover -s tests -p 'test_era5_canonical_promote_guarded.py' -v
       - name: Guarded canonical plan, check or promote
         env:
-          MODE: ${{ inputs.mode }}
+          MODE: ${{ github.event_name == 'schedule' && (vars.ERA5_CANONICAL_AUTO_WRITE == 'true' && 'auto-promote' || 'auto-check') || inputs.mode }}
           MONTHS: ${{ inputs.months }}
-          READ_APPROVED: ${{ inputs.approve_hf_read }}
-          WRITE_APPROVED: ${{ inputs.approve_hf_write }}
-          CONTRACT_APPROVED: ${{ inputs.reviewed_manifest_contract }}
+          READ_APPROVED: ${{ github.event_name == 'schedule' && 'true' || inputs.approve_hf_read }}
+          WRITE_APPROVED: ${{ github.event_name == 'schedule' && (vars.ERA5_CANONICAL_AUTO_WRITE == 'true' && 'true' || 'false') || inputs.approve_hf_write }}
+          CONTRACT_APPROVED: ${{ github.event_name == 'schedule' && (vars.ERA5_CANONICAL_CONTRACT_REVIEWED == 'true' && 'true' || 'false') || inputs.reviewed_manifest_contract }}
         run: |
           set -euo pipefail
-          args=("$MODE" --months "$MONTHS" --report era5_canonical_promote_report.json)
+          args=("$MODE" --report era5_canonical_promote_report.json)
+          if [[ "$MODE" != auto-* ]]; then args+=(--months "$MONTHS"); fi
           if [ "$READ_APPROVED" = true ]; then args+=(--approve-hf-read); fi
           if [ "$WRITE_APPROVED" = true ]; then args+=(--approve-hf-write); fi
           if [ "$CONTRACT_APPROVED" = true ]; then args+=(--reviewed-manifest-contract); fi
+          # Automatic tick chooses only one staged PASS month, and never submits CDS.
+          # The scheduled auto-promote branch is only reachable after BOTH write
+          # and contract-review repo Variables are explicitly set to true.
           # Offline plan mode does not write the report; uploads are only for review.
           if [ "$MODE" = plan ]; then args=(plan --months "$MONTHS"); fi
           python scripts/bulk/era5_canonical_promote_guarded.py "${args[@]}"

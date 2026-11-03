@@ -350,9 +350,92 @@ def run_remote(*, mode: str, months: tuple[str, ...], bucket: str,
         return result
 
 
+def find_next_unpromoted_pass(*, bucket: str, read_token: str,
+                              get_info: Callable, list_tree: Callable,
+                              download: Callable) -> str | None:
+    """Read-only discovery. Never trust a queue PASS without rechecking in run_remote.
+
+    Select the most recent verified staging month that is not fully canonical.
+    An existing manifest with missing Raw is an integrity failure, not a skip.
+    A Raw-only upload is eligible for safe RESUME_MANIFEST in run_remote.
+    """
+    require(bucket == BUCKET and bool(read_token.strip()), 'invalid read-only bucket/token')
+    require(get_info(bucket, token=read_token).private is True, 'bucket not PRIVATE')
+    stage_prefix = 'experiments/era5_monthly_vn_bbox_v1/'
+    stage_nodes = list(list_tree(bucket, prefix=stage_prefix, recursive=True,
+                                 token=read_token))
+    require(len(stage_nodes) <= 250, 'too many staging nodes for guarded scheduler')
+    stage_keys = {node.path for node in stage_nodes if getattr(node, 'type', None) == 'file'}
+    canonical_keys = set(_canonical_list(bucket, read_token, list_tree))
+
+    # At most 35 queue months, ordered newest-first, no local-audited overlap.
+    for year in (2023, 2022, 2021):
+        for n in range(12, 0, -1):
+            month = f'{year}-{n:02d}'
+            if not approved_month(month):
+                continue
+            raw_rel, mf_rel = canonical_paths(month)
+            raw_done = 'lake/v1/' + raw_rel in canonical_keys
+            mf_done = 'lake/v1/' + mf_rel in canonical_keys
+            require(not mf_done or raw_done,
+                    'canonical manifest without Raw for ' + month)
+            if raw_done and mf_done:
+                continue
+
+            state_key = key_for(month, 'state')
+            if state_key not in stage_keys:
+                # If canonical Raw is present but state absent, cannot resume safely.
+                require(not raw_done, 'orphaned canonical Raw without staging state ' + month)
+                continue
+
+            with tempfile.TemporaryDirectory(prefix='era5-auto-state-') as t:
+                local = Path(t) / 'state.json'
+                _download(download, bucket, read_token, state_key, local)
+                require(0 < local.stat().st_size <= MAX_JSON_BYTES,
+                        'unsafe staging state size for ' + month)
+                state = json.loads(local.read_text(encoding='utf-8'))
+            require(isinstance(state, dict) and state.get('month') == month,
+                    'staging state month mismatch for ' + month)
+            if state.get('status') != 'PASS':
+                # An in-flight/request-intent state is not eligible for promotion.
+                require(not raw_done, 'canonical Raw exists for non-PASS state ' + month)
+                continue
+            require(state.get('audit_status') == 'PASS',
+                    'staging marked PASS without audit for ' + month)
+            require(all(key_for(month, k) in stage_keys for k in ('raw', 'manifest')),
+                    'staging PASS lacks complete verified objects for ' + month)
+            return month
+    return None
+
+
+def auto_tick(*, mode: str, bucket: str, read_token: str, write_token: str,
+              schema: dict, get_info: Callable, list_tree: Callable,
+              download: Callable, upload: Callable | None = None) -> dict:
+    """Single-month guarded scheduler: check only unless explicit auto-promote gate."""
+    require(mode in ('auto-check', 'auto-promote'), 'invalid auto mode')
+    require(mode != 'auto-promote' or (bool(write_token.strip()) and upload is not None),
+            'automatic write not explicitly authorized')
+    chosen = find_next_unpromoted_pass(bucket=bucket, read_token=read_token,
+                                      get_info=get_info, list_tree=list_tree,
+                                      download=download)
+    if chosen is None:
+        print('AUTO_CANONICAL_IDLE no new staged PASS requiring canonical promotion', flush=True)
+        return {'mode': mode, 'status': 'IDLE', 'months': [], 'hf_writes': 0,
+                'cds_calls': 0, 'no_deletes': True}
+    print(f'AUTO_CANONICAL_SELECTED month={chosen} mode={mode}', flush=True)
+    result = run_remote(mode='check' if mode == 'auto-check' else 'promote',
+                        months=(chosen,), bucket=bucket, read_token=read_token,
+                        write_token=write_token if mode == 'auto-promote' else '',
+                        schema=schema, get_info=get_info, list_tree=list_tree,
+                        download=download,
+                        upload=upload if mode == 'auto-promote' else None)
+    result['auto_selected_month'] = chosen
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('plan', 'check', 'promote'))
+    parser.add_argument('mode', choices=('plan', 'check', 'promote', 'auto-check', 'auto-promote'))
     parser.add_argument('--months', default=','.join(MONTHS))
     parser.add_argument('--approve-hf-read', action='store_true')
     parser.add_argument('--approve-hf-write', action='store_true')
@@ -361,7 +444,7 @@ def main() -> int:
     parser.add_argument('--report', default='')
     args = parser.parse_args()
     try:
-        months = parse_months(args.months)
+        months = () if args.mode.startswith('auto-') else parse_months(args.months)
         if args.mode == 'plan':
             report = {'mode': 'OFFLINE_PLAN', 'months': list(months),
                       'raw_manifest_targets': [canonical_paths(m) for m in months],
@@ -369,17 +452,22 @@ def main() -> int:
             print(json.dumps(report, indent=2))
             return 0
         require(args.approve_hf_read, 'explicit HF read approval missing')
-        if args.mode == 'promote':
+        if args.mode in ('promote', 'auto-promote'):
             require(args.approve_hf_write and args.reviewed_manifest_contract,
                     'explicit write and contract review approvals required')
         schema = json.loads(Path(args.schema).read_text(encoding='utf-8'))
         from huggingface_hub import bucket_info, list_bucket_tree, download_bucket_files, batch_bucket_files
-        result = run_remote(mode=args.mode, months=months, bucket=BUCKET,
-                            read_token=os.environ.get('HF_READ_TOKEN', ''),
-                            write_token=os.environ.get('HF_WRITE_TOKEN', '') if args.mode == 'promote' else '',
-                            schema=schema, get_info=bucket_info,
-                            list_tree=list_bucket_tree, download=download_bucket_files,
-                            upload=batch_bucket_files if args.mode == 'promote' else None)
+        hf_read = os.environ.get('HF_READ_TOKEN', '')
+        hf_write = (os.environ.get('HF_WRITE_TOKEN', '')
+                    if args.mode in ('promote', 'auto-promote') else '')
+        kwargs = dict(bucket=BUCKET, read_token=hf_read, write_token=hf_write,
+                      schema=schema, get_info=bucket_info,
+                      list_tree=list_bucket_tree, download=download_bucket_files,
+                      upload=batch_bucket_files if hf_write else None)
+        if args.mode.startswith('auto-'):
+            result = auto_tick(mode=args.mode, **kwargs)
+        else:
+            result = run_remote(mode=args.mode, months=months, **kwargs)
         if args.report:
             p = Path(args.report)
             require(not p.exists(), 'report path already exists')
