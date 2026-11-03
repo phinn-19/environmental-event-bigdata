@@ -1,0 +1,58 @@
+name: ERA5 HF staging independent SHA verify - READ ONLY
+
+on:
+  workflow_dispatch:
+    inputs:
+      approve_hf_read:
+        description: 'Explicitly approve READ-ONLY private HF download (~64 MB), no CDS or writes'
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: era5-hf-staging-independent-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ github.repository == 'phinn-19/environmental-event-bigdata' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline unit tests and plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p test_era5_hf_staging_verify.py -v
+          python scripts/bulk/era5_hf_staging_verify.py plan
+      - name: Validate read approval
+        if: ${{ inputs.approve_hf_read != true }}
+        shell: bash
+        run: |
+          echo 'STOP: approval is false; no HF access'; exit 1
+      - name: Independent private HF SHA-256 read verification
+        if: ${{ inputs.approve_hf_read == true }}
+        shell: bash
+        env:
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          python -m pip install 'huggingface_hub>=1.16,<3'
+          python scripts/bulk/era5_hf_staging_verify.py verify \
+            --approve-hf-read \
+            --report era5_hf_staging_readonly_report.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() && inputs.approve_hf_read == true }}
+        with:
+          name: era5-hf-staging-readonly-verified
+          path: era5_hf_staging_readonly_report.json
+          retention-days: 7
