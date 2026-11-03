@@ -26,11 +26,17 @@
       "type": "string"
     },
     "start_utc": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time"
     },
     "end_utc": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time"
     },
     "retrieved_at_utc": {
@@ -45,7 +51,10 @@
       ]
     },
     "file": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "status": {
       "enum": [
@@ -63,6 +72,37 @@
       "minimum": 0
     },
     "sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "manifest-v1"
+    },
+    "source_product": {
+      "type": "string"
+    },
+    "acquisition_mode": {
+      "type": "string",
+      "enum": [
+        "live",
+        "replay"
+      ]
+    },
+    "bytes": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "error_type": {
       "type": [
         "string",
         "null"
