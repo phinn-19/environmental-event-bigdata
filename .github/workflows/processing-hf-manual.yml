@@ -1,0 +1,123 @@
+﻿name: Processing - Bounded HF Raw to Curated (manual)
+
+# Manual acceptance only. No cron, provider API or Ingestion modifications.
+on:
+  workflow_dispatch:
+    inputs:
+      aq_day:
+        description: 'UTC AQ target day (with up to 30 days history)'
+        required: true
+        default: '2024-11-01'
+      firms_day:
+        description: 'UTC FIRMS target day'
+        required: true
+        default: '2024-11-01'
+      era5_day:
+        description: 'UTC ERA5 target day'
+        required: true
+        default: '2024-11-01'
+      era5_region:
+        description: 'Process exactly one ERA5 region; never mix HANOI/VN_BBOX'
+        type: choice
+        options: [HANOI, VN_BBOX]
+        required: true
+        default: HANOI
+      publish:
+        description: 'Explicitly authorize new immutable Silver/Curated run on private HF'
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: processing-hf-manual-single-publisher
+  cancel-in-progress: false
+
+jobs:
+  process:
+    if: ${{ github.repository == 'phinn-19/environmental-event-bigdata' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Processing dependencies and HF CLI
+        run: python -m pip install 'PyYAML>=6,<7' 'pyspark==3.5.8' 'eccodes>=2.49.0,<2.51.0' 'huggingface_hub>=2.3,<3'
+      - name: Download Raw from private HF (no provider APIs)
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN" || { echo 'STOP: missing HF_READ_TOKEN'; exit 2; }
+          hf buckets sync hf://buckets/CourseworkBigData/env-event-lake/lake/v1/data/raw data/hf_snapshot/data/raw
+          python - <<'PY'
+          from pathlib import Path
+          total = sum(p.stat().st_size for p in Path('data/hf_snapshot/data/raw').rglob('*') if p.is_file())
+          print('DOWNLOADED_RAW_MIB:', round(total/1024**2, 2))
+          if total > 256*1024**2:
+              raise SystemExit('STOP: snapshot exceeds bounded download budget')
+          PY
+      - name: Prepare verified bounded batch
+        shell: bash
+        env:
+          AQ_DAY: ${{ inputs.aq_day }}
+          FIRMS_DAY: ${{ inputs.firms_day }}
+          ERA5_DAY: ${{ inputs.era5_day }}
+          ERA5_REGION: ${{ inputs.era5_region }}
+        run: |
+          set -euo pipefail
+          python scripts/processing_hf_select_batch.py --source data/hf_snapshot/data/raw --dest data/processing_job --aq-date "$AQ_DAY" --firms-date "$FIRMS_DAY" --era5-date "$ERA5_DAY" --era5-region "$ERA5_REGION"
+      - name: Run existing six Spark modules sequentially
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd data/processing_job
+          for module in openaq firms era5 air_quality_baseline air_quality_context_hourly fire_hotspots_context; do
+            echo "===== SPARK: $module ====="
+            python -m "src.processing.$module" --config configs/project.yaml
+          done
+      - name: Package and checksum all six outputs
+        shell: bash
+        env:
+          RUN_ID: run_gha_${{ github.run_id }}_${{ github.run_attempt }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python scripts/processing_hf_package.py --job data/processing_job --package data/processing_package --run-id "$RUN_ID" --commit "$COMMIT"
+      - name: Save verified output for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: processing-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/processing_package/
+          retention-days: 7
+      - name: Publish new immutable run to HF (approved only)
+        if: ${{ inputs.publish == true }}
+        shell: bash
+        env:
+          HF_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
+          HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
+          RUN_ID: run_gha_${{ github.run_id }}_${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN" && test -n "$HF_READ_TOKEN" || { echo 'STOP: missing HF token'; exit 2; }
+          REMOTE="hf://buckets/CourseworkBigData/env-event-lake/processing/automated/manual/$RUN_ID"
+          hf buckets sync data/processing_package "$REMOTE" --ignore-existing
+          mkdir -p data/readback
+          HF_TOKEN="$HF_READ_TOKEN" hf buckets sync "$REMOTE" data/readback
+          python scripts/processing_hf_package.py --package data/readback --verify-only
+          cmp data/processing_package/SHA256SUMS.txt data/readback/SHA256SUMS.txt
+          echo "HF PROCESSING PUBLISH: VERIFIED $REMOTE"

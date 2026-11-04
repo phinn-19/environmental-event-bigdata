@@ -16,7 +16,7 @@ from pyspark.sql import SparkSession, functions as F
 RAW_COLUMNS = [
     "latitude", "longitude", "bright_ti4", "scan", "track",
     "acq_date", "acq_time", "satellite", "instrument", "confidence",
-    "version", "bright_ti5", "frp", "daynight", "type",
+    "version", "bright_ti5", "frp", "daynight",
 ]
 
 
@@ -30,7 +30,7 @@ def verified_firms_files(root: Path, data_root: str):
     if not manifests:
         raise FileNotFoundError("No NASA FIRMS manifests found")
 
-    paths, total, header = [], 0, None
+    groups, total = {}, 0
 
     for manifest_path in manifests:
         manifest = json.loads(
@@ -77,10 +77,7 @@ def verified_firms_files(root: Path, data_root: str):
         ):
             raise ValueError(f"FIRMS header incomplete: {raw_file}")
 
-        if header is not None and reader.fieldnames != header:
-            raise ValueError("FIRMS CSV headers differ between files")
-
-        header = reader.fieldnames
+        header = tuple(reader.fieldnames)
         count = sum(1 for _ in reader)
 
         if count != manifest.get("row_count"):
@@ -89,16 +86,16 @@ def verified_firms_files(root: Path, data_root: str):
         if manifest["status"] == "empty" and count:
             raise ValueError("Empty FIRMS manifest contains rows")
 
-        paths.append(raw_file.as_posix())
+        groups.setdefault(header, []).append(raw_file.as_posix())
         total += count
 
-    return paths, total
+    return groups, total
 
 
 def build_silver(spark, root: Path, data_root="data"):
     """Convert verified FIRMS CSVs into Silver Parquet."""
 
-    paths, input_rows = verified_firms_files(root, data_root)
+    groups, input_rows = verified_firms_files(root, data_root)
 
     output = root / data_root / "silver/fire_hotspots"
 
@@ -106,18 +103,21 @@ def build_silver(spark, root: Path, data_root="data"):
         raise FileExistsError(f"Output already exists: {output}")
 
     # 1. Spark doc CSV
-    raw = (
-        spark.read
-        .option("header", True)
-        .option("inferSchema", False)
-        .option("mode", "FAILFAST")
-        .csv(paths)
-    )
-
-    df = raw.select(
-        *[F.trim(F.col(c)).alias(c) for c in RAW_COLUMNS],
-        F.input_file_name().alias("raw_file"),
-    )
+    df = None
+    for _, paths in groups.items():
+        raw = (
+            spark.read
+            .option("header", True)
+            .option("inferSchema", False)
+            .option("mode", "FAILFAST")
+            .option("enforceSchema", False)
+            .csv(paths)
+        )
+        part = raw.select(
+            *[F.trim(F.col(c)).alias(c) for c in RAW_COLUMNS],
+            F.input_file_name().alias("raw_file"),
+        )
+        df = part if df is None else df.unionByName(part)
 
     # 2. Chuan hoa thoi gian, toa do, FRP
     df = (
