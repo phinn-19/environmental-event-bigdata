@@ -69,7 +69,8 @@ def build(job: Path, package: Path, run_id: str, commit: str):
         for table in names:
             target = package / tier / table
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(job / "data" / tier / table, target)
+            shutil.copytree(job / "data" / tier / table, target,
+                            ignore=shutil.ignore_patterns(".*.crc"))
     shutil.copy2(job / "SELECTION.json", package / "SELECTION.json")
     shutil.copy2(job / "SCOPE_REPORT.json", package / "SCOPE_REPORT.json")
     (package / "PROVENANCE.json").write_text(json.dumps({
@@ -87,7 +88,8 @@ def build(job: Path, package: Path, run_id: str, commit: str):
         w = csv.writer(out)
         w.writerow(("path", "bytes", "sha256"))
         for f in sorted(package.rglob("*")):
-            if f.is_file():
+            # Do not inventory INVENTORY.csv itself (or the not-yet-created SHA256SUMS).
+            if f.is_file() and f.relative_to(package).as_posix() not in ("INVENTORY.csv", "SHA256SUMS.txt"):
                 w.writerow((f.relative_to(package).as_posix(), f.stat().st_size, sha(f)))
     lines = [f"{sha(f)}  {f.relative_to(package).as_posix()}" for f in sorted(package.rglob("*")) if f.is_file()]
     (package / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
