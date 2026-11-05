@@ -1,7 +1,14 @@
-﻿name: Processing - Bounded HF Raw to Curated (manual)
+name: Processing - Bounded HF Raw to Curated (manual)
 
 # Manual acceptance only. No cron, provider API or Ingestion modifications.
 on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/processing-hf-manual.yml'
+      - 'scripts/processing_hf_*.py'
+      - 'tests/test_processing_hf_bounded.py'
+      - 'src/processing/firms.py'
   workflow_dispatch:
     inputs:
       aq_day:
@@ -36,8 +43,28 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Verify Python and test bounded selector (no Spark/HF)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/processing_hf_select_batch.py scripts/processing_hf_scope_outputs.py scripts/processing_hf_package.py
+          python -m unittest discover -s tests -p 'test_processing_hf_bounded.py' -v
+
   process:
-    if: ${{ github.repository == 'phinn-19/environmental-event-bigdata' }}
+    needs: checks
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'phinn-19/environmental-event-bigdata' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -90,6 +117,11 @@ jobs:
             echo "===== SPARK: $module ====="
             python -m "src.processing.$module" --config configs/project.yaml
           done
+      - name: Scope six outputs to selected UTC days
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/processing_hf_scope_outputs.py --job data/processing_job --dest data/processing_job_scoped
       - name: Package and checksum all six outputs
         shell: bash
         env:
@@ -97,7 +129,7 @@ jobs:
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          python scripts/processing_hf_package.py --job data/processing_job --package data/processing_package --run-id "$RUN_ID" --commit "$COMMIT"
+          python scripts/processing_hf_package.py --job data/processing_job_scoped --package data/processing_package --run-id "$RUN_ID" --commit "$COMMIT"
       - name: Save verified output for review
         uses: actions/upload-artifact@v4
         with:
@@ -111,8 +143,10 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_WRITE_TOKEN }}
           HF_READ_TOKEN: ${{ secrets.HF_READ_TOKEN }}
           RUN_ID: run_gha_${{ github.run_id }}_${{ github.run_attempt }}
+          PROCESSING_PUBLISH_ENABLED: ${{ vars.PROCESSING_HF_PUBLISH_ENABLED }}
         run: |
           set -euo pipefail
+          test "${PROCESSING_PUBLISH_ENABLED:-false}" = 'true' || { echo 'STOP: repo variable PROCESSING_HF_PUBLISH_ENABLED must be true'; exit 2; }
           test -n "$HF_TOKEN" && test -n "$HF_READ_TOKEN" || { echo 'STOP: missing HF token'; exit 2; }
           REMOTE="hf://buckets/CourseworkBigData/env-event-lake/processing/automated/manual/$RUN_ID"
           hf buckets sync data/processing_package "$REMOTE" --ignore-existing
