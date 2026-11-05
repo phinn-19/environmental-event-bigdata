@@ -102,6 +102,8 @@ def scope(job: Path, dest: Path) -> dict:
         report["qc_warnings"].append("ERA5 next-day 00 UTC is not selected by this daily workflow; last-hour rain context may be null")
         shutil.copy2(job / "SELECTION.json", dest / "SELECTION.json")
         (dest / "SCOPE_REPORT.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        for warning in report["qc_warnings"]:
+            print("QC WARNING:", warning)
         print("TARGET-DAY SCOPE: PASS; all six outputs and row-count invariants verified")
         return report
     except BaseException:

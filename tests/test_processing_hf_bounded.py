@@ -8,6 +8,7 @@ import unittest
 
 from scripts.processing_hf_select_batch import select
 from scripts.processing_hf_package import validate, build, TABLES
+from scripts.processing_hf_publish_gate import check
 from scripts.processing_hf_scope_outputs import table_days
 
 
@@ -131,6 +132,51 @@ class BoundedSelectorTests(unittest.TestCase):
         (package / "SHA256SUMS.txt").write_text("0" * 64 + "  ../escape\n")
         with self.assertRaises(ValueError):
             validate(package)
+
+    def test_publish_gate_blocks_zero_rows(self):
+        job, package = self.root / "job", self.root / "package"
+        job.mkdir()
+        (job / "SELECTION.json").write_text(json.dumps({
+            "aq_day": "2024-11-01", "firms_day": "2024-11-01", "era5_day": "2024-11-01"}))
+        six = {name: {"rows": 1, "day_utc": "2024-11-01"} for names in TABLES.values() for name in names}
+        six["air_quality_hourly"]["rows"] = 0
+        six["air_quality_context_hourly"]["weather_matched_rows"] = 1
+        six["fire_hotspots_context"]["weather_matched_rows"] = 1
+        (job / "SCOPE_REPORT.json").write_text(json.dumps({"tables": six}))
+        for tier, names in TABLES.items():
+            for name in names:
+                target = job / "data" / tier / name
+                target.mkdir(parents=True)
+                (target / "_SUCCESS").write_bytes(b"")
+                (target / "part-000.snappy.parquet").write_bytes(b"fixture")
+                (target / ".part-000.snappy.parquet.crc").write_bytes(b"crc")
+        build(job, package, "run_gha_test_02", "abc123")
+        self.assertFalse(list(package.rglob("*.crc")))
+        import csv
+        with (package / "INVENTORY.csv").open(newline="") as f:
+            inventory = list(csv.DictReader(f))
+        self.assertFalse(any(row["path"] == "INVENTORY.csv" for row in inventory))
+        self.assertEqual(len(inventory) + 2, validate(package))
+        with self.assertRaisesRegex(ValueError, "empty target-day tables"):
+            check(package)
+
+    def test_publish_gate_accepts_technical_nonempty_coverage(self):
+        job, package = self.root / "job", self.root / "package"
+        job.mkdir()
+        (job / "SELECTION.json").write_text(json.dumps({
+            "aq_day": "2024-11-01", "firms_day": "2024-11-01", "era5_day": "2024-11-01"}))
+        six = {name: {"rows": 2, "day_utc": "2024-11-01"} for names in TABLES.values() for name in names}
+        six["air_quality_context_hourly"]["weather_matched_rows"] = 1
+        six["fire_hotspots_context"]["weather_matched_rows"] = 1
+        (job / "SCOPE_REPORT.json").write_text(json.dumps({"tables": six}))
+        for tier, names in TABLES.items():
+            for name in names:
+                target = job / "data" / tier / name
+                target.mkdir(parents=True)
+                (target / "_SUCCESS").write_bytes(b"")
+                (target / "part-000.snappy.parquet").write_bytes(b"fixture")
+        build(job, package, "run_gha_test_03", "abc123")
+        self.assertEqual(set(check(package)["tables"]), set(six))
 
     def test_package_build_verifies_scoped_metadata_and_tampering(self):
         job, package = self.root / "job", self.root / "package"

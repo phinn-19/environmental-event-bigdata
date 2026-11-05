@@ -136,6 +136,12 @@ jobs:
           name: processing-${{ github.run_id }}-${{ github.run_attempt }}
           path: data/processing_package/
           retention-days: 7
+      - name: Check data readiness before any HF write
+        if: ${{ inputs.publish == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/processing_hf_publish_gate.py --package data/processing_package
       - name: Publish new immutable run to HF (approved only)
         if: ${{ inputs.publish == true }}
         shell: bash
